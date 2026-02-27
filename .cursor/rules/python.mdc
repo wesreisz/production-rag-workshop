@@ -1,0 +1,308 @@
+---
+description: "Python development standards for AWS Lambda modules (Python 3.11+)"
+globs: "*.py"
+alwaysApply: false
+---
+
+# Python Development Standards (Python 3.11+)
+
+Tooling-first: do not restate style rules that ruff already enforces. This document covers **project conventions and patterns** for an AWS Lambda-based RAG pipeline.
+
+## 1) Tooling (source of truth)
+
+- **Dependency / venv management**: `uv` (preferred for local dev); each Lambda module uses `requirements.txt` for deployment packaging
+- **Formatting**: `ruff format`
+- **Linting + import sorting**: `ruff check` (select `E`, `F`, `I`)
+- **Type checking**: basedpyright (standard mode minimum)
+- **Testing**: pytest (+ `moto` for AWS service mocking)
+
+Treat the repo's `pyproject.toml` (if present) as authoritative configuration. If this doc conflicts with tooling config, **tooling wins**.
+
+Minimum Ruff policy (in `pyproject.toml` or `ruff.toml`):
+
+```toml
+[tool.ruff]
+line-length = 88
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+ignore = ["E501"]
+```
+
+Minimum basedpyright policy — adjust `include` to match module layout:
+
+```toml
+[tool.basedpyright]
+exclude = [".cursor", ".venv", "__pycache__", "build", "dist", "output"]
+include = ["src", "tests"]
+pythonVersion = "3.11"
+typeCheckingMode = "standard"
+reportMissingImports = false
+reportMissingTypeStubs = false
+```
+
+## 2) Naming conventions
+
+| Item | Convention | Example |
+|------|------------|---------|
+| Files / modules | `snake_case.py` | `embedding_service.py` |
+| Classes | `PascalCase` | `EmbeddingService` |
+| Functions / methods | `snake_case` | `get_embeddings` |
+| Variables | `snake_case` | `batch_size` |
+| Constants | `UPPER_SNAKE_CASE` | `MAX_RETRIES` |
+| Private | `_leading_underscore` | `_validate` |
+
+## 3) Type annotations (Python 3.11+)
+
+- **Must**: type annotate public functions, service boundaries, and Lambda handler signatures.
+- **Prefer**: built-in generics (`list[str]`, `dict[str, int]`) and union syntax (`X | None`).
+- **Avoid**: `Any` in new code unless it's truly untyped I/O at the boundary.
+
+```python
+from pathlib import Path
+from typing import Any
+
+
+def load_doc(path: str | Path) -> dict[str, Any] | None:
+    ...
+```
+
+## 4) Lambda handler pattern
+
+Handlers are **thin** — parse the event, delegate to a service, return a response. Keep business logic out of handler files.
+
+```python
+import json
+import logging
+
+from services.transcription_service import TranscriptionService
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+service = TranscriptionService()
+
+
+def handler(event: dict, context) -> dict:
+    bucket = event["detail"]["bucket"]["name"]
+    key = event["detail"]["object"]["key"]
+
+    result = service.process(bucket, key)
+
+    return {"statusCode": 200, "body": json.dumps(result)}
+```
+
+Key rules:
+- Instantiate clients and services **outside** the handler for connection reuse across warm invocations.
+- Keep handler functions synchronous (Lambda runtime calls them synchronously).
+- Parse the specific event shape you expect (S3, SQS, API Gateway) — don't accept arbitrary dicts without validation.
+
+## 5) Event parsing
+
+Each Lambda trigger delivers a different event shape. Parse explicitly:
+
+```python
+def _parse_s3_event(event: dict) -> tuple[str, str]:
+    detail = event["detail"]
+    return detail["bucket"]["name"], detail["object"]["key"]
+
+
+def _parse_sqs_event(event: dict) -> list[dict]:
+    return [json.loads(record["body"]) for record in event["Records"]]
+
+
+def _parse_api_gateway_event(event: dict) -> dict:
+    return json.loads(event.get("body", "{}"))
+```
+
+## 6) boto3 patterns
+
+```python
+import boto3
+from botocore.config import Config
+from botocore.exceptions import ClientError
+
+RETRY_CONFIG = Config(retries={"max_attempts": 3, "mode": "adaptive"})
+
+s3_client = boto3.client("s3", config=RETRY_CONFIG)
+bedrock_client = boto3.client("bedrock-runtime", config=RETRY_CONFIG)
+
+
+def get_object_safe(bucket: str, key: str) -> bytes | None:
+    try:
+        response = s3_client.get_object(Bucket=bucket, Key=key)
+        return response["Body"].read()
+    except ClientError as e:
+        if e.response["Error"]["Code"] == "NoSuchKey":
+            return None
+        raise
+```
+
+Key rules:
+- Create clients **at module level** (outside handler) for connection reuse.
+- Use `Config(retries=...)` with adaptive mode.
+- Catch `ClientError` and branch on error codes — don't catch bare `Exception` for AWS calls.
+- Never hardcode credentials — rely on IAM execution roles.
+
+## 7) Cold start awareness
+
+- Import heavy libraries (boto3 clients, psycopg2) at module level so they survive across warm invocations.
+- Avoid importing unused modules — every import adds to cold start time.
+- Use lazy initialization for expensive resources only when the handler might not need them on every invocation.
+
+## 8) Configuration management
+
+Lambda functions receive configuration via environment variables set in Terraform. Access them directly:
+
+```python
+import os
+
+EMBEDDING_MODEL_ID = os.environ["EMBEDDING_MODEL_ID"]
+VECTOR_DB_SECRET_ARN = os.environ["VECTOR_DB_SECRET_ARN"]
+CHUNKS_BUCKET = os.environ["CHUNKS_BUCKET"]
+```
+
+For secrets (database credentials, API keys), use AWS Secrets Manager:
+
+```python
+import json
+from functools import lru_cache
+
+import boto3
+
+secrets_client = boto3.client("secretsmanager")
+
+
+@lru_cache
+def get_secret(secret_arn: str) -> dict[str, str]:
+    response = secrets_client.get_secret_value(SecretId=secret_arn)
+    return json.loads(response["SecretString"])
+```
+
+Never log secrets or include them in error messages.
+
+## 9) Error handling & logging
+
+Use structured JSON logging for CloudWatch. AWS Lambda Powertools is preferred when available; otherwise use standard logging with JSON formatting.
+
+```python
+import logging
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+
+def handler(event: dict, context) -> dict:
+    request_id = context.aws_request_id if context else "local"
+
+    try:
+        result = process(event)
+        logger.info("processed successfully", extra={"request_id": request_id})
+        return {"statusCode": 200, "body": json.dumps(result)}
+    except ValueError as e:
+        logger.warning("bad request: %s", e, extra={"request_id": request_id})
+        return {"statusCode": 400, "body": json.dumps({"error": str(e)})}
+    except Exception:
+        logger.exception("unhandled failure", extra={"request_id": request_id})
+        return {"statusCode": 500, "body": json.dumps({"error": "internal error"})}
+```
+
+Key rules:
+- Use parameterized logging (`%s`) — never f-strings in log calls.
+- Log the `aws_request_id` for traceability.
+- Return structured error responses from API-facing handlers.
+
+## 10) Database patterns (Aurora pgvector)
+
+```python
+import psycopg2
+
+from config import get_secret
+
+_connection = None
+
+
+def get_connection():
+    global _connection
+    if _connection is None or _connection.closed:
+        creds = get_secret(os.environ["VECTOR_DB_SECRET_ARN"])
+        _connection = psycopg2.connect(
+            host=creds["host"],
+            port=creds["port"],
+            dbname=creds["dbname"],
+            user=creds["username"],
+            password=creds["password"],
+            sslmode="require",
+        )
+    return _connection
+```
+
+Key rules:
+- Reuse connections across warm invocations (module-level singleton).
+- Always use `sslmode="require"` for Aurora.
+- Use parameterized queries — never string interpolation for SQL.
+
+## 11) Project structure
+
+```
+modules/<name>-module/
+├── src/
+│   ├── handlers/     # Lambda entry points (thin)
+│   ├── services/     # Business logic
+│   ├── models/       # Data structures
+│   └── utils/        # Helpers
+├── tests/
+├── requirements.txt
+└── dev-requirements.txt
+```
+
+Each module is independently deployable. Keep handler files under 50 lines. Keep service files under 300 lines.
+
+## 12) Testing
+
+- Use `pytest` with `moto` for mocking AWS services.
+- Use AAA pattern (Arrange / Act / Assert).
+- Test handlers with synthetic event fixtures.
+- Test services with mocked AWS clients.
+
+```python
+import json
+
+import boto3
+import pytest
+from moto import mock_aws
+
+
+@mock_aws
+def test_get_object_returns_content():
+    # Arrange
+    s3 = boto3.client("s3", region_name="us-east-1")
+    s3.create_bucket(Bucket="test-bucket")
+    s3.put_object(Bucket="test-bucket", Key="test.txt", Body=b"hello")
+
+    # Act
+    from services.storage_service import get_object_safe
+    result = get_object_safe("test-bucket", "test.txt")
+
+    # Assert
+    assert result == b"hello"
+```
+
+## 13) Pydantic models (when applicable)
+
+Use Pydantic v2 for data validation at service boundaries (API Gateway request/response, inter-service contracts):
+
+```python
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class ChunkRequest(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    transcript_key: str = Field(..., min_length=1)
+    chunk_size: int = Field(default=500, ge=100, le=2000)
+    overlap: int = Field(default=50, ge=0, le=500)
+```
+
+Not every Lambda needs Pydantic — use it where input validation adds safety, skip it for internal event-driven Lambdas with trusted event shapes.

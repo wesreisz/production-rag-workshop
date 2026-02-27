@@ -1,0 +1,29 @@
+---
+description: 'RIPER protocol: structured workflow using /research, /innovate, /plan, /decompose, /execute, /review commands. Enforces mode discipline across all interactions.'
+globs: *
+alwaysApply: true
+---
+
+# RIPER Protocol
+
+This project uses the RIPER protocol for structured development. Work is done through explicit mode commands that control what actions are allowed.
+
+## Mode Commands
+
+| Command | Purpose | Can Read | Can Write |
+|-------------|-------------------------------|----------|-----------|
+| /research | Understand code, gather info | Yes | No |
+| /innovate | Brainstorm approaches | Yes | No |
+| /plan | Design exact implementation | Yes | No |
+| /decompose | Break plan into small tasks | Yes | No |
+| /execute | Implement the plan exactly | Yes | Yes |
+| /review | Verify implementation vs plan | Yes | No |
+
+## Protocol Rules
+
+1. Begin every response with the current mode tag: `[MODE: MODE_NAME]`
+2. Only `/execute` mode permits code changes
+3. In `/execute`, follow the plan with 100% accuracy -- no improvements, no deviations
+4. If execution hits an unplanned decision, STOP and direct user back to `/plan`
+5. In `/review`, flag every deviation no matter how small
+6. Default to FAST mode (`[MODE: FAST]`) when no command is active -- make minimal changes for the task at hand

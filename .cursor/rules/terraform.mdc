@@ -1,0 +1,110 @@
+---
+description: "Terraform coding standards for AWS infrastructure (Lambda, Aurora, Step Functions)"
+globs: "*.tf,*.tfvars"
+alwaysApply: false
+---
+
+# Terraform Standards
+
+## Formatting & Naming
+
+- Run `terraform fmt` before every commit.
+- 2 spaces for indentation, lines under 120 characters.
+- Lowercase with underscores: `web_server` not `webServer`.
+- Don't repeat the resource type in the name: `aws_lambda_function "chunker"` not `"chunker_lambda_function"`.
+
+## File Layout
+
+```
+infra/
+├── bootstrap/              # Remote state bucket + DynamoDB lock table
+├── environments/dev/       # Root module for dev
+│   ├── main.tf
+│   ├── variables.tf
+│   ├── outputs.tf
+│   ├── versions.tf
+│   └── locals.tf
+└── modules/                # Reusable modules
+    └── <module>/
+        ├── main.tf
+        ├── variables.tf
+        └── outputs.tf
+```
+
+## Version Pinning
+
+Pin providers with pessimistic constraints. Pin Terraform itself.
+
+```hcl
+terraform {
+  required_version = ">= 1.5"
+  required_providers {
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
+    }
+  }
+}
+```
+
+## Variables & Outputs
+
+- Every variable and output **must** have a `description`.
+- Specify `type` on all variables.
+- Use `validation` blocks for values that can be wrong (CIDRs, environment names).
+- Mark sensitive outputs with `sensitive = true`.
+
+```hcl
+variable "environment" {
+  description = "Deployment environment"
+  type        = string
+  validation {
+    condition     = contains(["dev", "staging", "prod"], var.environment)
+    error_message = "Must be dev, staging, or prod."
+  }
+}
+```
+
+## Tagging
+
+Apply consistent tags via a `locals` block. Every taggable resource gets these.
+
+```hcl
+locals {
+  common_tags = {
+    Environment = var.environment
+    Project     = "production-rag"
+    ManagedBy   = "terraform"
+  }
+}
+```
+
+## State
+
+- Remote backend (S3 + DynamoDB locking) — configured in `bootstrap/`.
+- Separate state per environment.
+- Never commit `.tfstate` files.
+
+## Security
+
+- No hardcoded secrets — use `aws_secretsmanager_secret` or SSM Parameter Store.
+- IAM policies follow least privilege.
+- Lambda execution roles get only the permissions the function needs.
+
+## Resource Patterns
+
+- Use `data` sources to reference existing resources; group them before `resource` blocks.
+- Use `depends_on` only when implicit dependencies are insufficient.
+- Use `lifecycle.create_before_destroy` for zero-downtime updates on networking resources.
+- Use `lifecycle.prevent_destroy` on stateful resources (Aurora, S3 buckets with data).
+
+## Region Lock
+
+All resources deploy to `us-east-1`. Set the provider once in the root module; do not override per-resource.
+
+## Validation
+
+Run before every commit:
+1. `terraform fmt -check`
+2. `terraform validate`
+3. `terraform plan` (review diff)
