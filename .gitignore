@@ -1,0 +1,4 @@
+# Workshop account credentials and tracking
+infra/workshop-accounts/students/
+infra/workshop-accounts/*.csv
+infra/workshop-accounts/config.env

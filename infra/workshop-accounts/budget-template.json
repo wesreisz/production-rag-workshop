@@ -1,0 +1,13 @@
+{
+  "BudgetName": "__BUDGET_NAME__",
+  "BudgetLimit": {
+    "Amount": "__BUDGET_LIMIT__",
+    "Unit": "USD"
+  },
+  "BudgetType": "COST",
+  "TimeUnit": "MONTHLY",
+  "TimePeriod": {
+    "Start": "__START_DATE__",
+    "End": "2087-06-15T00:00:00.000Z"
+  }
+}
