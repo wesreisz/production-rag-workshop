@@ -171,7 +171,7 @@ Participants must complete before arrival:
 ### 4.2 Event Flow (Detailed)
 
 ```
-S3 Upload ──▶ CloudTrail ──▶ EventBridge Rule ──▶ Step Functions State Machine
+S3 Upload ──▶ EventBridge Rule ──▶ Step Functions State Machine
                                                           │
                                                           ├── State 1: Validate Input
                                                           ├── State 2: Start Transcription Job
@@ -202,8 +202,7 @@ S3 Upload ──▶ CloudTrail ──▶ EventBridge Rule ──▶ Step Functio
 | Service | Purpose | Pricing Model | Workshop Est. Cost |
 |---------|---------|---------------|-------------------|
 | **Amazon S3** | Video/media storage, transcription output, chunk storage | $0.023/GB/mo | < $0.10 |
-| **AWS CloudTrail** | S3 event capture for EventBridge | Free tier (1 trail) | $0.00 |
-| **Amazon EventBridge** | Event routing from S3 to Step Functions | $1.00/M events | < $0.01 |
+| **Amazon EventBridge** | Event routing from S3 to Step Functions (via S3 native notifications) | $1.00/M events | < $0.01 |
 | **AWS Step Functions** | Pipeline orchestration | $0.025/1K transitions | < $0.01 |
 | **AWS Lambda** | Compute for all modules | $0.20/M requests + duration | < $0.50 |
 | **Amazon Transcribe** | Video/audio to text | $0.024/min (standard) | ~$2.40 (100 min) |
@@ -400,15 +399,36 @@ production-rag/
 
 ### 6.3 EventBridge Event Format
 
-All inter-service events follow this canonical format:
+S3 sends events directly to EventBridge via native S3 notifications (enabled per-bucket). The S3 trigger event uses this format:
+
+```json
+{
+  "source": "aws.s3",
+  "detail-type": "Object Created",
+  "detail": {
+    "bucket": {
+      "name": "production-rag-media-<account-id>"
+    },
+    "object": {
+      "key": "uploads/video-123.mp4",
+      "size": 15728640
+    },
+    "reason": "PutObject"
+  }
+}
+```
+
+Inter-service events within Step Functions follow this canonical format:
 
 ```json
 {
   "source": "video-pipeline.<module-name>",
   "detail-type": "<ModuleName>.<Action>Completed",
   "detail": {
-    "requestParameters": {
-      "bucketName": "production-rag-media-<account-id>",
+    "bucket": {
+      "name": "production-rag-media-<account-id>"
+    },
+    "object": {
       "key": "uploads/video-123.mp4"
     },
     "records": [
@@ -462,8 +482,10 @@ All Lambda functions return this structure for Step Functions compatibility:
 ```json
 {
   "detail": {
-    "requestParameters": {
-      "bucketName": "production-rag-media-xxx",
+    "bucket": {
+      "name": "production-rag-media-xxx"
+    },
+    "object": {
       "key": "uploads/sample.mp4"
     },
     "metadata": {
@@ -796,7 +818,7 @@ Error paths at each state → ErrorHandler → NotifyFailure
 - **Timeouts:** Overall execution timeout of 60 minutes; individual state timeouts appropriate to each service
 - **Input/Output Processing:** Use ResultSelector and OutputPath to keep the state payload lean
 
-**Terraform Resources:** Step Functions state machine, IAM role with Lambda invoke permissions, EventBridge rule for S3 trigger, CloudTrail for S3 data events
+**Terraform Resources:** Step Functions state machine, IAM role with Lambda invoke permissions, EventBridge rule for S3 trigger
 
 ---
 
@@ -950,9 +972,9 @@ Each workshop stage follows the RIPER-5 protocol. The instructor guides particip
 
 | RIPER Phase | Activity | Duration |
 |-------------|----------|----------|
-| RESEARCH | Explore S3 event patterns, CloudTrail data events, EventBridge rules | 10 min |
-| INNOVATE | Discuss trigger options: S3 notifications vs CloudTrail+EventBridge vs direct Lambda trigger | 5 min |
-| PLAN | Define Terraform resources: S3 bucket, CloudTrail trail, EventBridge rule, target Step Functions | 10 min |
+| RESEARCH | Explore S3 event patterns, S3 EventBridge notifications, EventBridge rules | 10 min |
+| INNOVATE | Discuss trigger options: S3 legacy notifications vs S3→EventBridge (direct) vs direct Lambda trigger | 5 min |
+| PLAN | Define Terraform resources: S3 bucket with EventBridge notifications, EventBridge rule, target Step Functions | 10 min |
 | EXECUTE | Write Terraform for S3 + trigger infrastructure; test with a sample upload | 15 min |
 | REVIEW | Verify event reaches Step Functions; inspect CloudWatch logs | 5 min |
 
@@ -1082,7 +1104,6 @@ Topics covered:
 | Lambda | ~320 invocations (10 transcribe starts + 50 polls + 10 chunk + 200 embed + 50 query), ~1,200s at 256MB | $0.01 |
 | Step Functions | 10 executions × ~15 base transitions + 200 Map state transitions = ~750 transitions | $0.00 |
 | EventBridge | ~100 events | $0.00 |
-| CloudTrail | 1 trail, S3 data events | $0.00 |
 
 **Subtotal: ~$0.01**
 

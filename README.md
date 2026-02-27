@@ -29,7 +29,7 @@ Video Upload ──▶ S3 ──▶ EventBridge ──▶ Step Functions
 | Transcription | AWS Transcribe |
 | Embeddings | Amazon Bedrock Titan Text Embeddings V2 |
 | Vector Database | Aurora Serverless v2 + pgvector |
-| Event Routing | EventBridge + CloudTrail |
+| Event Routing | EventBridge (S3 native notifications) |
 | Message Queue | Amazon SQS |
 | API | API Gateway (REST) |
 | IDE Integration | MCP Server (Model Context Protocol) |
@@ -182,7 +182,6 @@ The SCP (`scp-workshop.json`) uses a Deny + NotAction pattern to allowlist only 
 | Secrets Manager | Database credentials |
 | KMS | Encryption |
 | IAM / STS | Roles, policies, assume-role |
-| CloudTrail | S3 data event capture |
 | DynamoDB | Terraform state locking |
 
 EC2 instance launches (`RunInstances`) are explicitly denied. All actions outside `us-east-1` are denied (except global services like IAM and STS).
