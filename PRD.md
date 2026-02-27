@@ -236,7 +236,7 @@ S3 Upload ──▶ CloudTrail ──▶ EventBridge Rule ──▶ Step Functio
 
 **Why Aurora+pgvector over Pinecone:**
 
-1. **Cost:** ~$0.12/hr vs Pinecone's pod-based pricing (~$0.096/hr for p1.x1, but with commitments). Aurora can auto-pause to $0.
+1. **Cost:** ~$0.12/hr vs Pinecone's pod-based pricing (~$0.096/hr for p1.x1, but with commitments). Aurora Serverless v2 scales down to 0.5 ACU ($0.06/hr) when idle.
 2. **No external account:** No Pinecone signup or API key needed.
 3. **Familiar technology:** PostgreSQL is known to most senior developers. SQL-based vector queries are debuggable.
 4. **Full control:** Can inspect data directly, run ad-hoc queries, join with metadata tables.
@@ -245,7 +245,7 @@ S3 Upload ──▶ CloudTrail ──▶ EventBridge Rule ──▶ Step Functio
 **Why Aurora Serverless v2 specifically (over OpenSearch Serverless):**
 
 - OpenSearch Serverless vector search has a minimum of ~4 OCUs ($0.96/hr) even when idle
-- Aurora Serverless v2 scales down to 0.5 ACU ($0.06/hr) and can auto-pause to $0
+- Aurora Serverless v2 scales down to 0.5 ACU ($0.06/hr) — much cheaper when idle
 - For a cost-conscious workshop, Aurora is ~10x cheaper when idle
 - PostgreSQL + pgvector is conceptually simpler than OpenSearch's JSON-based API
 
@@ -305,12 +305,13 @@ production-rag/
 │   │       └── deploy.sh
 │   └── modules/                        # Reusable Terraform modules
 │       ├── s3/                         # S3 buckets (media, transcripts)
-│       ├── lambda/                     # Generic Lambda module
-│       ├── lambda-embedding/           # Embedding-specific Lambda (Bedrock access)
+│       ├── lambda/                     # Generic Lambda (transcribe, chunking)
+│       ├── lambda-vpc/                 # VPC-attached Lambda (embedding, question)
 │       ├── aurora-vectordb/            # Aurora Serverless v2 + pgvector
 │       ├── step-functions/             # Pipeline orchestration
 │       ├── sqs/                        # SQS queues
 │       ├── api-gateway/                # REST API for question service
+│       ├── networking/                 # VPC endpoints, security groups
 │       └── secrets/                    # Secrets Manager
 ├── modules/
 │   ├── transcribe-module/
@@ -807,9 +808,8 @@ Error paths at each state → ErrorHandler → NotifyFailure
 
 - Engine: Aurora PostgreSQL 15.x (pgvector compatible)
 - Instance class: `db.serverless` (Aurora Serverless v2)
-- Min ACU: 0.5 (scales to zero-ish; ~$0.06/hr)
+- Min ACU: 0.5 (~$0.06/hr at minimum; does NOT auto-pause to zero)
 - Max ACU: 4 (sufficient for workshop load)
-- Auto-pause: Enabled (pause after 5 minutes of inactivity for cost savings)
 - VPC: Default VPC with security group allowing Lambda access
 - Public access: Disabled (Lambda connects via VPC)
 
