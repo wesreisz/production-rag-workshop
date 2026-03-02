@@ -2,3 +2,13 @@
 infra/workshop-accounts/students/
 infra/workshop-accounts/*.csv
 infra/workshop-accounts/config.env
+
+# Terraform
+**/.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfplan
+.terraform.lock.hcl
+
+# Large binary samples
+samples/*.mp4

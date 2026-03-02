@@ -1,6 +1,6 @@
 # Video Upload & Workflow Trigger
 
-**Deliverable:** Uploading a file to `s3://<bucket>/uploads/` triggers a Step Functions state machine execution.
+**Deliverable:** Uploading a file to `s3://<bucket>/uploads/` triggers a Step Functions state machine execution. There are two sample files in the samples folder.
 
 ---
 
