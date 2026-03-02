@@ -15,3 +15,8 @@ output "check_transcription_function_name" {
   description = "Check transcription Lambda function name"
   value       = module.check_transcription.function_name
 }
+
+output "chunk_transcript_function_name" {
+  description = "Chunk transcript Lambda function name"
+  value       = module.chunk_transcript.function_name
+}

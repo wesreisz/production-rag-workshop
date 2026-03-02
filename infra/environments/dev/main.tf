@@ -74,6 +74,36 @@ module "check_transcription" {
   })
 }
 
+module "chunk_transcript" {
+  source = "../../modules/lambda"
+
+  function_name = "${var.project_name}-chunk-transcript"
+  handler       = "src.handlers.chunk_transcript.handler"
+  timeout       = 120
+  source_dir    = "${path.module}/../../../modules/chunking-module"
+  tags          = local.common_tags
+
+  environment_variables = {
+    MEDIA_BUCKET = module.media_bucket.bucket_name
+  }
+
+  policy_statements = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${module.media_bucket.bucket_arn}/transcripts/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
+        Resource = "${module.media_bucket.bucket_arn}/chunks/*"
+      }
+    ]
+  })
+}
+
 resource "aws_cloudwatch_log_group" "pipeline" {
   name              = "/aws/stepfunctions/${var.project_name}-pipeline"
   retention_in_days = 14
@@ -134,6 +164,7 @@ resource "aws_iam_role_policy" "sfn_lambda_invoke" {
         Resource = [
           module.start_transcription.function_arn,
           module.check_transcription.function_arn,
+          module.chunk_transcript.function_arn,
         ]
       }
     ]
@@ -234,7 +265,52 @@ resource "aws_sfn_state_machine" "pipeline" {
       }
       TranscriptionSucceeded = {
         Type = "Pass"
+        Next = "ChunkTranscript"
+      }
+      ChunkTranscript = {
+        Type     = "Task"
+        Resource = "arn:aws:states:::lambda:invoke"
+        Parameters = {
+          FunctionName = module.chunk_transcript.function_arn
+          Payload = {
+            "detail" = {
+              "bucket_name.$"       = "$.transcription.detail.bucket_name"
+              "transcript_s3_key.$" = "$.transcription.detail.transcript_s3_key"
+              "video_id.$"          = "$.transcription.detail.video_id"
+              "source_key.$"        = "$.transcription.detail.source_key"
+            }
+          }
+        }
+        ResultPath = "$.chunking"
+        ResultSelector = {
+          "detail.$"     = "$.Payload.detail"
+          "statusCode.$" = "$.Payload.statusCode"
+        }
+        Next = "ChunkingSucceeded"
+        Retry = [
+          {
+            ErrorEquals     = ["Lambda.ServiceException", "Lambda.AWSLambdaException", "Lambda.SdkClientException"]
+            IntervalSeconds = 5
+            MaxAttempts     = 2
+            BackoffRate     = 2.0
+          }
+        ]
+        Catch = [
+          {
+            ErrorEquals = ["States.ALL"]
+            Next        = "ChunkingFailed"
+            ResultPath  = "$.error"
+          }
+        ]
+      }
+      ChunkingSucceeded = {
+        Type = "Pass"
         End  = true
+      }
+      ChunkingFailed = {
+        Type  = "Fail"
+        Error = "ChunkingFailed"
+        Cause = "Chunking failed or encountered an error"
       }
       TranscriptionFailed = {
         Type  = "Fail"
