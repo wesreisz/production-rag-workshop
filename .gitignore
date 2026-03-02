@@ -8,7 +8,6 @@ infra/workshop-accounts/config.env
 *.tfstate
 *.tfstate.backup
 *.tfplan
-.terraform.lock.hcl
 
 # Large binary samples
 samples/*.mp4
