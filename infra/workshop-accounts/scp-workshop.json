@@ -65,7 +65,8 @@
         "health:*",
         "ce:*",
         "cur:*",
-        "pricing:*"
+        "pricing:*",
+        "cloudwatch:*"
       ],
       "Resource": "*"
     },

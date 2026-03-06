@@ -1,2 +1,2 @@
 pytest
-moto[s3]
+moto[s3,sqs]

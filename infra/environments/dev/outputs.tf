@@ -20,3 +20,13 @@ output "chunk_transcript_function_name" {
   description = "Chunk transcript Lambda function name"
   value       = module.chunk_transcript.function_name
 }
+
+output "embedding_queue_url" {
+  description = "Embedding fan-out queue URL"
+  value       = aws_sqs_queue.embedding.url
+}
+
+output "embedding_queue_arn" {
+  description = "Embedding fan-out queue ARN"
+  value       = aws_sqs_queue.embedding.arn
+}

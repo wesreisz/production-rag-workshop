@@ -1,4 +1,5 @@
 import json
+import os
 
 from src.services.chunking_service import ChunkingService
 from src.utils.logger import get_logger
@@ -6,6 +7,7 @@ from src.utils.logger import get_logger
 logger = get_logger(__name__)
 
 service = ChunkingService()
+EMBEDDING_QUEUE_URL = os.environ["EMBEDDING_QUEUE_URL"]
 
 
 def handler(event: dict, context) -> dict:
@@ -22,6 +24,9 @@ def handler(event: dict, context) -> dict:
         timed_words = service.parse_timed_words(transcript)
         chunks = service.chunk(timed_words, video_id, source_key)
         chunk_keys = service.store_chunks(bucket_name, video_id, chunks)
+        messages_published = service.publish_chunks(
+            EMBEDDING_QUEUE_URL, chunk_keys, bucket_name, video_id
+        )
 
         return {
             "statusCode": 200,
@@ -29,6 +34,7 @@ def handler(event: dict, context) -> dict:
                 "chunk_count": len(chunks),
                 "chunks_s3_prefix": f"chunks/{video_id}/",
                 "chunk_keys": chunk_keys,
+                "messages_published": messages_published,
                 "video_id": video_id,
                 "bucket_name": bucket_name,
             },

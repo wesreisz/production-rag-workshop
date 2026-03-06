@@ -14,6 +14,7 @@ SENTENCE_ENDINGS = frozenset((".", "!", "?"))
 class ChunkingService:
     def __init__(self) -> None:
         self._s3 = boto3.client("s3")
+        self._sqs = boto3.client("sqs")
 
     def read_transcript(self, bucket: str, key: str) -> dict:
         response = self._s3.get_object(Bucket=bucket, Key=key)
@@ -170,3 +171,25 @@ class ChunkingService:
         )
 
         return keys
+
+    def publish_chunks(
+        self, queue_url: str, chunk_keys: list[str], bucket: str, video_id: str
+    ) -> int:
+        for key in chunk_keys:
+            self._sqs.send_message(
+                QueueUrl=queue_url,
+                MessageBody=json.dumps({
+                    "chunk_s3_key": key,
+                    "bucket": bucket,
+                    "video_id": video_id,
+                }),
+            )
+
+        logger.info(
+            "published %d chunk messages for video %s to %s",
+            len(chunk_keys),
+            video_id,
+            queue_url,
+        )
+
+        return len(chunk_keys)

@@ -204,3 +204,48 @@ class TestStoreChunks:
             "chunks/vid/chunk-001.json",
             "chunks/vid/chunk-002.json",
         ]
+
+
+class TestPublishChunks:
+    @mock_aws
+    def test_sends_sqs_messages(self):
+        # Arrange
+        sqs = boto3.client("sqs", region_name="us-east-1")
+        queue = sqs.create_queue(QueueName="test-embedding-queue")
+        queue_url = queue["QueueUrl"]
+        service = ChunkingService()
+        chunk_keys = [
+            "chunks/v/chunk-001.json",
+            "chunks/v/chunk-002.json",
+        ]
+
+        # Act
+        service.publish_chunks(queue_url, chunk_keys, "test-bucket", "test-video")
+
+        # Assert
+        messages = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10)
+        bodies = [json.loads(m["Body"]) for m in messages["Messages"]]
+        assert len(bodies) == 2
+        assert bodies[0]["chunk_s3_key"] == "chunks/v/chunk-001.json"
+        assert bodies[0]["bucket"] == "test-bucket"
+        assert bodies[0]["video_id"] == "test-video"
+        assert bodies[1]["chunk_s3_key"] == "chunks/v/chunk-002.json"
+
+    @mock_aws
+    def test_returns_count(self):
+        # Arrange
+        sqs = boto3.client("sqs", region_name="us-east-1")
+        queue = sqs.create_queue(QueueName="test-embedding-queue")
+        queue_url = queue["QueueUrl"]
+        service = ChunkingService()
+        chunk_keys = [
+            "chunks/v/chunk-001.json",
+            "chunks/v/chunk-002.json",
+            "chunks/v/chunk-003.json",
+        ]
+
+        # Act
+        result = service.publish_chunks(queue_url, chunk_keys, "test-bucket", "test-video")
+
+        # Assert
+        assert result == 3

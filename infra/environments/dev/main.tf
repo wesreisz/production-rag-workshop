@@ -84,7 +84,8 @@ module "chunk_transcript" {
   tags          = local.common_tags
 
   environment_variables = {
-    MEDIA_BUCKET = module.media_bucket.bucket_name
+    MEDIA_BUCKET        = module.media_bucket.bucket_name
+    EMBEDDING_QUEUE_URL = aws_sqs_queue.embedding.url
   }
 
   policy_statements = jsonencode({
@@ -99,8 +100,29 @@ module "chunk_transcript" {
         Effect   = "Allow"
         Action   = ["s3:PutObject"]
         Resource = "${module.media_bucket.bucket_arn}/chunks/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage"]
+        Resource = aws_sqs_queue.embedding.arn
       }
     ]
+  })
+}
+
+resource "aws_sqs_queue" "embedding_dlq" {
+  name                      = "${var.project_name}-embedding-dlq"
+  message_retention_seconds = 86400
+}
+
+resource "aws_sqs_queue" "embedding" {
+  name                       = "${var.project_name}-embedding-queue"
+  visibility_timeout_seconds = 300
+  message_retention_seconds  = 86400
+
+  redrive_policy = jsonencode({
+    deadLetterTargetArn = aws_sqs_queue.embedding_dlq.arn
+    maxReceiveCount     = 3
   })
 }
 
