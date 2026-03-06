@@ -1,3 +1,5 @@
+from unittest.mock import patch
+
 import boto3
 import pytest
 from moto import mock_aws
@@ -69,7 +71,8 @@ class TestDetectMediaFormat:
 
 class TestStartJob:
     @mock_aws
-    def test_starts_transcription_job(self):
+    @patch("src.services.transcribe_service.time.time", return_value=1700000000)
+    def test_starts_transcription_job(self, _mock_time):
         # Arrange
         s3 = boto3.client("s3", region_name="us-east-1")
         s3.create_bucket(Bucket="test-bucket")
@@ -81,7 +84,7 @@ class TestStartJob:
         result = service.start_job("test-bucket", "uploads/sample.mp4", "sample")
 
         # Assert
-        assert result["transcription_job_name"] == "production-rag-sample"
+        assert result["transcription_job_name"] == "production-rag-sample-1700000000"
         assert result["transcript_s3_key"] == "transcripts/sample/raw.json"
         assert result["status"] == "IN_PROGRESS"
 
