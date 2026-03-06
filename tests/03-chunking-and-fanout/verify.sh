@@ -10,6 +10,8 @@ echo "Run unit tests separately:"
 echo "  cd $MODULE_DIR && python -m pytest tests/ -v"
 echo ""
 
+read -rp "Press Enter to continue or Ctrl+C to exit... "
+
 BUCKET=$(terraform -chdir="$TF_DIR" output -raw media_bucket_name)
 STATE_MACHINE=$(terraform -chdir="$TF_DIR" output -raw state_machine_arn)
 
