@@ -126,12 +126,20 @@ chunking = output.get('chunking', {}).get('detail', {})
 chunk_keys = chunking.get('chunk_keys', [])
 chunk_count = chunking.get('chunk_count', 0)
 
+messages_published = chunking.get('messages_published', 0)
+
 if chunk_count > 0 and len(chunk_keys) == chunk_count:
     print(f'PASS — chunk_count={chunk_count}, chunk_keys has {len(chunk_keys)} entries')
     for k in chunk_keys:
         print(f'  {k}')
 else:
     print(f'FAIL — chunk_count={chunk_count}, chunk_keys length={len(chunk_keys)}')
+    sys.exit(1)
+
+if messages_published == chunk_count:
+    print(f'PASS — messages_published={messages_published} matches chunk_count={chunk_count}')
+else:
+    print(f'FAIL — messages_published={messages_published}, expected {chunk_count}')
     sys.exit(1)
 "
 
@@ -148,6 +156,22 @@ if echo "$STATES" | grep -q "ChunkTranscript"; then
   echo "PASS — ChunkTranscript state executed"
 else
   echo "FAIL — ChunkTranscript state not found in execution history"
+  exit 1
+fi
+
+echo ""
+echo "=== 9. Verify SQS messages ==="
+QUEUE_URL=$(terraform -chdir="$TF_DIR" output -raw embedding_queue_url)
+SQS_COUNT=$(aws sqs get-queue-attributes \
+  --queue-url "$QUEUE_URL" \
+  --attribute-names ApproximateNumberOfMessages \
+  --query "Attributes.ApproximateNumberOfMessages" \
+  --output text)
+
+if [ "$SQS_COUNT" -gt 0 ]; then
+  echo "PASS — embedding queue has $SQS_COUNT message(s)"
+else
+  echo "FAIL — embedding queue has 0 messages"
   exit 1
 fi
 

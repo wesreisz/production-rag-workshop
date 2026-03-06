@@ -1,6 +1,6 @@
 # Chunking & Fan-Out
 
-**Deliverable:** When transcription completes, the Step Functions pipeline automatically reads the raw transcript from S3, splits it into ~500-token chunks with sentence-boundary awareness, stores each chunk as a JSON file in `s3://<bucket>/chunks/{video_id}/`, and returns a list of chunk keys suitable for Map-state fan-out in the embedding stage.
+**Deliverable:** When transcription completes, the Step Functions pipeline automatically reads the raw transcript from S3, splits it into ~500-token chunks with sentence-boundary awareness, stores each chunk as a JSON file in `s3://<bucket>/chunks/{video_id}/`, and publishes each chunk reference to an SQS queue for embedding fan-out.
 
 ---
 
@@ -34,9 +34,11 @@ Video Upload ──▶ S3 ──▶ EventBridge ──▶ Step Functions
                                               ├── IsTranscriptionComplete? (existing)
                                               ├── TranscriptionSucceeded (existing, updated)
                                               ├── ChunkTranscript (Lambda) ◄── THIS STAGE
-                                              ├── ChunkingSucceeded (temporary end)
-                                              ├── Embed (future — Map state over chunk_keys)
-                                              └── Done
+                                              ├── ChunkingSucceeded (pipeline end)
+                                              │
+SQS Queue ◄── chunk references published by ChunkTranscript Lambda
+    │
+    └── Embed Lambda (future — triggered per SQS message)
 ```
 
 ---
@@ -239,7 +241,7 @@ modules/chunking-module/
 |------|---------|
 | `modules/chunking-module/src/handlers/chunk_transcript.py` | Lambda entry point: read transcript, chunk, store, return keys |
 | `modules/chunking-module/src/services/chunking_service.py` | Business logic: parse transcript, chunk text, store chunks |
-| `modules/chunking-module/src/utils/logger.py` | Structured JSON logger (same as transcribe module) |
+| `modules/chunking-module/src/utils/logger.py` | Shared logger utility — same as transcribe module's `logger.py` |
 | `modules/chunking-module/requirements.txt` | Runtime dependencies |
 | `modules/chunking-module/dev-requirements.txt` | Test dependencies |
 | All `__init__.py` files | Python package markers (empty files) |
@@ -274,6 +276,7 @@ modules/chunking-module/
       "chunks/hello-my_name_is_wes/chunk-002.json",
       "chunks/hello-my_name_is_wes/chunk-003.json"
     ],
+    "messages_published": 3,
     "video_id": "hello-my_name_is_wes",
     "bucket_name": "production-rag-media-123456789012"
   }
@@ -287,15 +290,16 @@ modules/chunking-module/
 3. Call `ChunkingService.parse_timed_words(transcript_json)` to extract timed words
 4. Call `ChunkingService.chunk(timed_words, video_id, source_key)` to produce chunk objects
 5. Call `ChunkingService.store_chunks(bucket, video_id, chunks)` to write chunk JSONs to S3
-6. Return standardized response with chunk keys and count
+6. Call `ChunkingService.publish_chunks(queue_url, chunk_keys, bucket, video_id)` to publish each chunk S3 key as a message to the SQS embedding queue
+7. Return standardized response with chunk keys, count, and messages_published
 
-**Error handling** follows the same pattern as the transcribe handlers: `ValueError` → 400, unhandled → 500.
+**Error handling:** Same pattern as transcribe handlers — `ValueError` → 400, unhandled exceptions → 500.
 
 ---
 
 #### ChunkingService
 
-Business logic layer. All S3 I/O and chunking logic lives here.
+Business logic layer. All S3 I/O, chunking logic, and SQS publishing lives here. Follows the same pattern as `TranscribeService`: a class with boto3 clients (`s3`, `sqs`) created in `__init__`, instantiated once at module level for warm-invocation reuse.
 
 | Method | Input | Output | Description |
 |--------|-------|--------|-------------|
@@ -304,71 +308,9 @@ Business logic layer. All S3 I/O and chunking logic lives here.
 | `build_sentences(timed_words)` | list of timed words | `list[dict]` | Group timed words into sentences, splitting on `.` `!` `?` |
 | `chunk(timed_words, video_id, source_key)` | timed words, video_id, source_key | `list[dict]` | Full chunking pipeline: build sentences → group into chunks → build chunk objects |
 | `store_chunks(bucket, video_id, chunks)` | bucket, video_id, list of chunk dicts | `list[str]` | Write each chunk as JSON to S3, return list of S3 keys |
+| `publish_chunks(queue_url, chunk_keys, bucket, video_id)` | SQS queue URL, list of S3 keys, bucket, video_id | `int` | Publish one SQS message per chunk key, return count of messages published |
 
-**`read_transcript` implementation:**
-
-```python
-s3_client.get_object(Bucket=bucket, Key=key)
-json.loads(response["Body"].read())
-```
-
-**`parse_timed_words` implementation:**
-
-Iterate through `transcript["results"]["items"]`:
-
-```python
-for item in items:
-    content = item["alternatives"][0]["content"]
-    if item["type"] == "pronunciation":
-        timed_words.append({
-            "text": content,
-            "start_time": float(item["start_time"]),
-            "end_time": float(item["end_time"]),
-        })
-    elif item["type"] == "punctuation" and timed_words:
-        timed_words[-1]["text"] += content
-```
-
-**`build_sentences` implementation:**
-
-Walk through timed words, accumulate into current sentence. When a word ends with `.`, `!`, or `?`, finalize the sentence:
-
-```python
-sentence = {
-    "text": " ".join(word["text"] for word in sentence_words),
-    "start_time": sentence_words[0]["start_time"],
-    "end_time": sentence_words[-1]["end_time"],
-    "word_count": len(sentence_words),
-}
-```
-
-If no sentence-ending punctuation is found in the entire transcript, treat the whole text as one sentence.
-
-**`chunk` implementation:**
-
-1. Call `build_sentences(timed_words)`
-2. Accumulate sentences until `word_count >= TARGET_CHUNK_WORDS` (500)
-3. On overflow, finalize the current chunk
-4. For overlap: prepend trailing sentences from the previous chunk (up to `OVERLAP_WORDS` = 50 words) to the start of the new chunk
-5. After all sentences, finalize any remaining chunk
-6. Build chunk objects with the chunk schema defined above
-7. Sequence numbers are 1-based; chunk IDs are `{video_id}-chunk-{NNN}`
-
-**`store_chunks` implementation:**
-
-For each chunk, write JSON to S3:
-
-```python
-key = f"chunks/{video_id}/chunk-{chunk['sequence']:03d}.json"
-s3_client.put_object(
-    Bucket=bucket,
-    Key=key,
-    Body=json.dumps(chunk),
-    ContentType="application/json",
-)
-```
-
-Return the list of S3 keys.
+**Edge case:** If no sentence-ending punctuation is found in the entire transcript, `build_sentences` treats the whole text as one sentence.
 
 ---
 
@@ -384,7 +326,7 @@ No additional dependencies beyond `boto3` (available in Lambda runtime). Word co
 **`dev-requirements.txt`:**
 ```
 pytest
-moto[s3]
+moto[s3,sqs]
 ```
 
 ---
@@ -407,6 +349,8 @@ Test the core chunking logic without AWS calls (mock S3 with moto).
 | `test_chunk_metadata` | Chunk objects contain correct video_id, sequence, start/end times, metadata |
 | `test_store_chunks_writes_to_s3` | Chunks are written to correct S3 paths (moto) |
 | `test_store_chunks_returns_keys` | Returned keys match expected `chunks/{video_id}/chunk-NNN.json` pattern |
+| `test_publish_chunks_sends_sqs_messages` | Calls `publish_chunks` with a stubbed SQS client, asserts `send_message` called once per chunk key with correct message body |
+| `test_publish_chunks_returns_count` | Calls `publish_chunks` with 3 chunk keys, asserts return value is `3` |
 
 **`conftest.py` fixtures:**
 
@@ -420,29 +364,63 @@ Test the core chunking logic without AWS calls (mock S3 with moto).
 
 ### Part C: Chunking Lambda Deployment (Terraform)
 
-Add one Lambda module call to `infra/environments/dev/main.tf`.
+Add one Lambda module call to `infra/environments/dev/main.tf` using the shared `infra/modules/lambda` module (same as transcribe Lambdas).
 
 | Setting | Value |
 |---------|-------|
 | Function name | `${var.project_name}-chunk-transcript` |
 | Handler | `src.handlers.chunk_transcript.handler` |
 | Source dir | `${path.module}/../../../modules/chunking-module` |
-| Runtime | `python3.11` |
+| Runtime | `python3.11` (module default) |
 | Timeout | `120` |
-| Memory | `256` |
+| Memory | `256` (module default) |
 
 IAM permissions:
 
 - `s3:GetObject` on `${module.media_bucket.bucket_arn}/transcripts/*`
 - `s3:PutObject` on `${module.media_bucket.bucket_arn}/chunks/*`
+- `sqs:SendMessage` on the embedding queue ARN
 
 Environment variables:
 
 - `MEDIA_BUCKET` = `module.media_bucket.bucket_name`
+- `EMBEDDING_QUEUE_URL` = SQS queue URL for the embedding fan-out queue
 
 ---
 
-### Part D: Step Functions State Machine Update
+### Part D: SQS Embedding Queue (Terraform)
+
+Create the SQS queue that the chunking Lambda publishes to. The embedding Lambda (Stage 4) will be wired as a consumer in a later spec. Add these resources directly to `infra/environments/dev/main.tf`.
+
+| Resource | Type | Purpose |
+|----------|------|---------|
+| Embedding queue | `aws_sqs_queue` | Receive chunk references for embedding fan-out |
+| Dead-letter queue | `aws_sqs_queue` | Capture failed messages after max retries |
+| Redrive policy | `aws_sqs_queue_redrive_policy` | Route failed messages to DLQ after 3 attempts |
+
+**Queue naming:**
+- Embedding queue: `${var.project_name}-embedding-queue`
+- Dead-letter queue: `${var.project_name}-embedding-dlq`
+
+| Setting | Value | Rationale |
+|---------|-------|-----------|
+| Visibility timeout | `300` (5 min) | Must exceed embedding Lambda timeout so in-flight messages aren't redelivered |
+| Message retention | `86400` (1 day) | Enough time to debug failures without losing messages |
+| DLQ max receive count | `3` | Messages that fail 3 times move to DLQ for inspection |
+
+**SQS message format** (published by chunking Lambda):
+
+```json
+{
+  "chunk_s3_key": "chunks/hello-my_name_is_wes/chunk-001.json",
+  "bucket": "production-rag-media-123456789012",
+  "video_id": "hello-my_name_is_wes"
+}
+```
+
+---
+
+### Part E: Step Functions State Machine Update
 
 Modify the existing state machine to add the chunking state after transcription.
 
@@ -526,11 +504,11 @@ The full state payload after `ChunkingSucceeded` will contain:
 }
 ```
 
-The `$.chunking.detail.chunk_keys` array is designed for the Stage 4 embedding fan-out: a Step Functions Map state will iterate over this list, invoking the embedding Lambda once per chunk key.
+The chunking Lambda publishes each chunk key as an individual SQS message to the embedding queue. The Step Functions pipeline ends at `ChunkingSucceeded`. The embedding Lambda (Stage 4) is triggered independently by SQS, processing one chunk per message invocation.
 
 ---
 
-### Part E: Step Functions IAM Update
+### Part F: Step Functions IAM Update
 
 Add Lambda invoke permission for the chunking function to the existing `sfn_lambda_invoke` policy.
 
@@ -540,13 +518,15 @@ Add Lambda invoke permission for the chunking function to the existing `sfn_lamb
 
 ---
 
-### Part F: Outputs
+### Part G: Outputs
 
 **Add to `infra/environments/dev/outputs.tf`:**
 
 | Output | Value | Description |
 |--------|-------|-------------|
 | `chunk_transcript_function_name` | `module.chunk_transcript.function_name` | Chunk transcript Lambda |
+| `embedding_queue_url` | `aws_sqs_queue.embedding.url` | Embedding fan-out queue URL |
+| `embedding_queue_arn` | `aws_sqs_queue.embedding.arn` | Embedding fan-out queue ARN |
 
 ---
 
@@ -555,18 +535,20 @@ Add Lambda invoke permission for the chunking function to the existing `sfn_lamb
 - [ ] 1. Create `modules/chunking-module/requirements.txt` with `boto3`
 - [ ] 2. Create `modules/chunking-module/dev-requirements.txt` with `pytest`, `moto[s3]`
 - [ ] 3. Create all `__init__.py` files (`src/`, `src/handlers/`, `src/services/`, `src/utils/`, `tests/`, `tests/unit/`)
-- [ ] 4. Create `modules/chunking-module/src/utils/logger.py` (copy from transcribe module)
-- [ ] 5. Create `modules/chunking-module/src/services/chunking_service.py` with `read_transcript`, `parse_timed_words`, `build_sentences`, `chunk`, `store_chunks`
-- [ ] 6. Create `modules/chunking-module/src/handlers/chunk_transcript.py` handler
+- [ ] 4. Create `modules/chunking-module/src/utils/logger.py` (content specified in Part A)
+- [ ] 5. Create `modules/chunking-module/src/services/chunking_service.py` with `read_transcript`, `parse_timed_words`, `build_sentences`, `chunk`, `store_chunks`, `publish_chunks`
+- [ ] 6. Create `modules/chunking-module/src/handlers/chunk_transcript.py` handler (reads `EMBEDDING_QUEUE_URL` env var, calls `publish_chunks`)
 - [ ] 7. Create `modules/chunking-module/tests/conftest.py` with shared fixtures
-- [ ] 8. Create `modules/chunking-module/tests/unit/test_chunking_service.py` with unit tests
-- [ ] 9. Add `chunk_transcript` Lambda module call to `infra/environments/dev/main.tf`
-- [ ] 10. Update `TranscriptionSucceeded` state from `End: true` to `Next: ChunkTranscript` in `infra/environments/dev/main.tf`
-- [ ] 11. Add `ChunkTranscript`, `ChunkingSucceeded`, `ChunkingFailed` states to Step Functions definition in `infra/environments/dev/main.tf`
-- [ ] 12. Add `module.chunk_transcript.function_arn` to `sfn_lambda_invoke` policy Resource list in `infra/environments/dev/main.tf`
-- [ ] 13. Add new output to `infra/environments/dev/outputs.tf`
-- [ ] 14. Run `terraform init && terraform apply` in `infra/environments/dev/`
-- [ ] 15. Verify: upload sample audio and confirm chunking completes end-to-end
+- [ ] 8. Create `modules/chunking-module/tests/unit/test_chunking_service.py` with unit tests (including SQS publish tests)
+- [ ] 9. Add SQS embedding queue and DLQ resources to `infra/environments/dev/main.tf`
+- [ ] 10. Add `chunk_transcript` Lambda module call to `infra/environments/dev/main.tf` (include `EMBEDDING_QUEUE_URL` env var)
+- [ ] 11. Add `sqs:SendMessage` to chunking Lambda IAM policy for the embedding queue ARN
+- [ ] 12. Update `TranscriptionSucceeded` state from `End: true` to `Next: ChunkTranscript` in `infra/environments/dev/main.tf`
+- [ ] 13. Add `ChunkTranscript`, `ChunkingSucceeded`, `ChunkingFailed` states to Step Functions definition in `infra/environments/dev/main.tf`
+- [ ] 14. Add `module.chunk_transcript.function_arn` to `sfn_lambda_invoke` policy Resource list in `infra/environments/dev/main.tf`
+- [ ] 15. Add new outputs (`chunk_transcript_function_name`, `embedding_queue_url`, `embedding_queue_arn`) to `infra/environments/dev/outputs.tf`
+- [ ] 16. Run `terraform init && terraform apply` in `infra/environments/dev/`
+- [ ] 17. Verify: upload sample audio and confirm chunking completes end-to-end and SQS messages appear in the embedding queue
 
 ---
 
@@ -675,6 +657,19 @@ aws stepfunctions get-execution-history \
 
 Expected: Shows `StartTranscription`, `CheckTranscriptionStatus`, `ChunkTranscript`, and `ChunkingSucceeded`.
 
+### Step 9: Verify SQS messages
+
+```bash
+QUEUE_URL=$(terraform -chdir=infra/environments/dev output -raw embedding_queue_url)
+aws sqs get-queue-attributes \
+  --queue-url "$QUEUE_URL" \
+  --attribute-names ApproximateNumberOfMessages \
+  --query "Attributes.ApproximateNumberOfMessages" \
+  --output text
+```
+
+Expected: A number greater than 0, matching the `chunk_count` from the Step Functions output.
+
 ---
 
 ## Success Criteria
@@ -692,6 +687,8 @@ Expected: Shows `StartTranscription`, `CheckTranscriptionStatus`, `ChunkTranscri
 | Chunk count is reasonable | For a short audio file (~30s), expect 1 chunk; for a 50-min video, expect ~50-100 chunks |
 | Execution output has chunk_keys | `$.chunking.detail.chunk_keys` is a non-empty array of S3 keys |
 | chunk_keys match S3 files | Every key in `chunk_keys` exists as an object in S3 |
+| SQS messages published | `$.chunking.detail.messages_published` equals `$.chunking.detail.chunk_count` |
+| SQS queue has messages | `aws sqs get-queue-attributes --attribute-names ApproximateNumberOfMessages` returns > 0 after execution |
 | Error handling works | `ChunkingFailed` state catches Lambda errors |
 | Original event preserved | Execution output still contains `$.detail.bucket.name` and `$.transcription.detail` |
 | Unit tests pass | `cd modules/chunking-module && python -m pytest tests/` passes |
