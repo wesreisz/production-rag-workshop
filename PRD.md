@@ -535,7 +535,7 @@ All Lambda functions return this structure for Step Functions compatibility:
 
 ### 7.2 Chunking Module
 
-**Purpose:** Take a raw transcript from S3, split it into retrieval-friendly chunks with metadata, and either pass chunks directly to the next Step Functions state or publish them to SQS for fan-out processing.
+**Purpose:** Take a raw transcript from S3, split it into retrieval-friendly chunks with metadata, and publish them to SQS for fan-out processing.
 
 **Input (from Step Functions):**
 ```json
@@ -564,7 +564,7 @@ All Lambda functions return this structure for Step Functions compatibility:
    - Start/end timestamps (from transcript word-level timing)
    - Full metadata propagation (speaker, title, video_id)
 5. Store chunks as individual JSON files in S3: `chunks/{video_id}/chunk-{N}.json`
-6. Publish chunk references to SQS for embedding fan-out (or return list to Step Functions for Map state)
+6. Publish chunk references to SQS for embedding fan-out
 
 **Chunk Schema:**
 ```json
@@ -600,7 +600,7 @@ All Lambda functions return this structure for Step Functions compatibility:
 }
 ```
 
-**Dependencies:** `boto3`, `tiktoken` (for token counting)
+**Dependencies:** `boto3` (word count is used as a token proxy — no external tokenizer needed)
 
 **Terraform Resources:** Lambda function, IAM role with S3 read/write, SQS send permissions
 
@@ -610,7 +610,7 @@ All Lambda functions return this structure for Step Functions compatibility:
 
 **Purpose:** Take text chunks, generate vector embeddings using Amazon Bedrock Titan Embeddings V2, and store the vectors in Aurora pgvector.
 
-**Input (from Step Functions Map state or SQS):**
+**Input (from SQS):**
 ```json
 {
   "chunk_s3_key": "chunks/video-123/chunk-001.json"
@@ -801,18 +801,17 @@ Cursor IDE ──(stdio)──▶ MCP Server (local Python process) ──(HTTPS
 StartState: ValidateInput
   → TranscribeVideo
     → WaitForTranscription (Wait + Poll loop)
-      → ChunkTranscript
-        → FanOutEmbeddings (Map state over chunks)
-          → GenerateAndStoreEmbedding (per chunk)
-        → ConfirmIndexingComplete
-          → SuccessState
+      → ChunkTranscript (chunks stored in S3, references published to SQS)
+        → SuccessState
+
+SQS Queue → Embedding Lambda (per chunk, independent of Step Functions)
 
 Error paths at each state → ErrorHandler → NotifyFailure
 ```
 
 **Key Design Decisions:**
 
-- **Map State for Embeddings:** Step Functions Map state iterates over chunks in parallel (max concurrency configurable to avoid Bedrock throttling)
+- **SQS Fan-Out for Embeddings:** The chunking Lambda publishes chunk references to an SQS queue. The embedding Lambda is triggered by SQS (one invocation per message). This decouples embedding from the Step Functions pipeline, avoids Map state transition costs, and provides built-in retry with dead-letter queue support.
 - **Wait Loop for Transcribe:** Use a Choice state + Wait state to poll Transcribe job status every 30 seconds
 - **Error Handling:** Each state has a Catch block that routes to a centralized error handler
 - **Timeouts:** Overall execution timeout of 60 minutes; individual state timeouts appropriate to each service
@@ -902,6 +901,7 @@ CREATE TABLE videos (
 - `logs:*`
 
 **Embedding Lambda Role:**
+- `sqs:ReceiveMessage`, `sqs:DeleteMessage`, `sqs:GetQueueAttributes` on embedding queue
 - `s3:GetObject` on chunks prefix
 - `bedrock:InvokeModel` on Titan Embeddings model
 - VPC execution role (`ec2:CreateNetworkInterface`, etc.)
@@ -1022,7 +1022,7 @@ Each workshop stage follows the RIPER-5 protocol. The instructor guides particip
 |-------------|----------|----------|
 | RESEARCH | Study Bedrock Titan Embeddings V2 API; pgvector query syntax; HNSW vs IVFFlat indexes | 10 min |
 | INNOVATE | Discuss: embedding dimensions trade-off (256 vs 1024); batch vs per-chunk processing; index type selection | 10 min |
-| PLAN | Define embedding service (Bedrock client), pgvector insert logic, Aurora schema, VPC networking, Step Functions Map state | 10 min |
+| PLAN | Define embedding service (Bedrock client), pgvector insert logic, Aurora schema, VPC networking, SQS trigger | 10 min |
 | EXECUTE | Deploy Aurora Serverless v2 + pgvector (Terraform); implement embedding module; Lambda layer for psycopg2; test with sample chunks | 35 min |
 | REVIEW | Query pgvector directly (psql or Lambda test) to verify embeddings stored; check vector dimensions and similarity search works | 10 min |
 
@@ -1102,7 +1102,7 @@ Topics covered:
 | Service | Usage Calculation | Cost |
 |---------|-------------------|------|
 | Lambda | ~320 invocations (10 transcribe starts + 50 polls + 10 chunk + 200 embed + 50 query), ~1,200s at 256MB | $0.01 |
-| Step Functions | 10 executions × ~15 base transitions + 200 Map state transitions = ~750 transitions | $0.00 |
+| Step Functions | 10 executions × ~15 base transitions = ~150 transitions (embeddings handled by SQS, not Step Functions) | $0.00 |
 | EventBridge | ~100 events | $0.00 |
 
 **Subtotal: ~$0.01**
