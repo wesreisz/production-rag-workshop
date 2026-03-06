@@ -1,6 +1,6 @@
 # Video Upload & Workflow Trigger
 
-**Deliverable:** Uploading a file to `s3://<bucket>/uploads/` triggers a Step Functions state machine execution. There are two sample files in the samples folder.
+**Deliverable:** Uploading a media file to `s3://<bucket>/uploads/` triggers a Step Functions state machine execution. Two sample files are provided: `samples/hello-my_name_is_wes.mp3` (44 KB, quick test) and `samples/test-audio.mp4` (31 MB, longer test).
 
 ---
 
@@ -139,10 +139,10 @@ The root module that composes all infrastructure modules.
 
 | File | Content |
 |------|---------|
-| `infra/environments/dev/versions.tf` | Terraform version constraint, AWS provider, S3 backend config |
+| `infra/environments/dev/versions.tf` | Terraform version constraint (`>= 1.5`), `required_providers` (AWS `~> 5.0`), S3 backend config |
 | `infra/environments/dev/variables.tf` | `environment`, `aws_region`, `project_name` |
 | `infra/environments/dev/locals.tf` | Common tags, account ID data source, naming prefix |
-| `infra/environments/dev/main.tf` | Module calls (S3, EventBridge, Step Functions) |
+| `infra/environments/dev/main.tf` | `provider "aws"` with region and `default_tags`, module calls (S3, EventBridge, Step Functions) |
 | `infra/environments/dev/outputs.tf` | Media bucket name, Step Functions ARN |
 
 **Backend configuration** must reference the bootstrap bucket:
@@ -162,6 +162,10 @@ The root module that composes all infrastructure modules.
 **Locals:**
 - `account_id` from `data.aws_caller_identity.current`
 - `common_tags` with Environment, Project, ManagedBy
+
+**Provider configuration** (in `main.tf`, not `versions.tf`):
+- Region: `var.aws_region`
+- `default_tags` block using `local.common_tags` — automatically tags every resource created in this module
 
 ---
 
@@ -286,7 +290,7 @@ Connects S3 upload events to the Step Functions state machine.
 - [ ] 11. Add EventBridge rule and target to `infra/environments/dev/main.tf` (rule, target, IAM role)
 - [ ] 12. Create `infra/environments/dev/outputs.tf` exposing media bucket name, state machine ARN
 - [ ] 13. Run `terraform init && terraform apply` in `infra/environments/dev/`
-- [ ] 14. Verify: upload a test file and confirm Step Functions execution starts
+- [ ] 14. Verify: upload a sample audio file and confirm Step Functions execution starts
 
 ---
 
@@ -301,32 +305,42 @@ terraform plan
 terraform apply
 ```
 
-### Step 2: Upload a test file
+### Step 2: Run the verification script
 
 ```bash
-aws s3 cp ../../../samples/sample.mp3 s3://$(terraform output -raw media_bucket_name)/uploads/sample.mp3
+bash tests/01-video-upload-and-workflow/verify.sh
 ```
 
-If no sample file exists yet, any small file works:
+The script uploads `samples/hello-my_name_is_wes.mp3` to the `uploads/` prefix, waits 5 seconds for EventBridge to fire, then checks that a Step Functions execution was triggered. It verifies the **trigger mechanism only** — it does not wait for the execution to complete (transcription and downstream stages are verified by their own specs).
 
-```bash
-echo "test" > /tmp/test-upload.txt
-aws s3 cp /tmp/test-upload.txt s3://$(terraform output -raw media_bucket_name)/uploads/test-upload.txt
+### Step 3: Check result
+
+The script exits with code `0` on success and code `1` on failure.
+
+**PASS** — execution was triggered:
+
+```
+=== 3. Verify execution was triggered ===
+Status: RUNNING
+PASS — S3 upload triggered Step Functions execution
 ```
 
-### Step 3: Confirm Step Functions execution
+**FAIL** — no execution found (EventBridge rule or target is misconfigured):
+
+```
+=== 3. Verify execution was triggered ===
+FAIL — no execution found
+```
+
+### Step 4: Manual verification (optional)
 
 ```bash
+cd infra/environments/dev
+
 aws stepfunctions list-executions \
   --state-machine-arn $(terraform output -raw state_machine_arn) \
   --max-results 1
-```
 
-Expected: An execution in `SUCCEEDED` status.
-
-### Step 4: Inspect the execution input
-
-```bash
 EXECUTION_ARN=$(aws stepfunctions list-executions \
   --state-machine-arn $(terraform output -raw state_machine_arn) \
   --max-results 1 \
@@ -352,6 +366,6 @@ Expected: The full S3 EventBridge event JSON showing `detail.bucket.name` and `d
 | EventBridge notifications enabled on bucket | AWS Console → S3 → bucket → Properties → Amazon EventBridge → "On" |
 | EventBridge rule exists | `aws events list-rules` shows `production-rag-s3-upload-trigger` |
 | Step Functions state machine exists | `aws stepfunctions list-state-machines` shows `production-rag-pipeline` |
-| Upload triggers execution | Upload to `uploads/` prefix → new execution appears in Step Functions |
+| Upload triggers execution | Upload `hello-my_name_is_wes.mp3` to `uploads/` prefix → execution appears (any status) |
 | Non-upload prefix is ignored | Upload to root or another prefix → no new execution |
 | Execution input contains S3 event | Describe execution → input has `detail.bucket.name` and `detail.object.key` |

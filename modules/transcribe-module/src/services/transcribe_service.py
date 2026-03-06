@@ -1,3 +1,4 @@
+import time
 from pathlib import PurePosixPath
 
 import boto3
@@ -27,7 +28,7 @@ class TranscribeService:
 
     def start_job(self, bucket: str, key: str, video_id: str) -> dict[str, str]:
         media_format = self.detect_media_format(key)
-        job_name = f"production-rag-{video_id}"
+        job_name = f"production-rag-{video_id}-{int(time.time())}"
         transcript_key = f"transcripts/{video_id}/raw.json"
 
         self._client.start_transcription_job(
