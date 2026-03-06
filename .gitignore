@@ -9,5 +9,9 @@ infra/workshop-accounts/config.env
 *.tfstate.backup
 *.tfplan
 
+# Python
+__pycache__/
+*.pyc
+
 # Large binary samples
 samples/*.mp4
