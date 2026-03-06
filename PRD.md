@@ -274,9 +274,10 @@ The reference codebase uses Step Functions for pipeline orchestration. This is r
 |--------|-----------------|
 | Transcribe | `boto3`, `botocore` |
 | Chunking | `boto3`, `tiktoken` (or custom tokenizer) |
-| Embedding | `boto3` (Bedrock runtime) |
+| Embedding | `boto3` (Bedrock runtime), `psycopg2-binary`, `pgvector` |
 | Question | `boto3` (Bedrock runtime), `psycopg2-binary`, `pgvector` |
 | MCP Server | `mcp`, `httpx`, `pydantic` |
+| Migrations | `alembic`, `sqlalchemy`, `psycopg2-binary`, `pgvector` |
 
 ---
 
@@ -365,6 +366,7 @@ production-rag/
 │       ├── tests/
 │       ├── requirements.txt
 │       └── dev-requirements.txt
+├── migrations/                        # Alembic database migrations (version-tracked schema changes)
 ├── samples/
 │   └── sample.mp3                      # Sample audio for testing
 ├── specs/
@@ -659,6 +661,8 @@ All Lambda functions return this structure for Step Functions compatibility:
 
 **Dependencies:** `boto3`, `psycopg2-binary`, `pgvector`
 
+**Schema Management:** Database migrations are handled separately via Alembic. The embedding module does not manage schema — it assumes tables exist.
+
 **Terraform Resources:** Lambda function (VPC-attached for Aurora access), IAM role with Bedrock InvokeModel and RDS access, Lambda layer for `psycopg2`
 
 ---
@@ -834,7 +838,9 @@ Error paths at each state → ErrorHandler → NotifyFailure
 - VPC: Default VPC with security group allowing Lambda access
 - Public access: Disabled (Lambda connects via VPC)
 
-**Database Schema:**
+**Database Schema (managed via Alembic migrations):**
+
+Database schema changes are version-tracked using Alembic, ensuring repeatable and auditable schema evolution across environments.
 
 ```sql
 -- Enable pgvector extension
