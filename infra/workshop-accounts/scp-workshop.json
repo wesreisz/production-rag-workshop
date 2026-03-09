@@ -45,6 +45,7 @@
         "ec2:AssociateAddress",
         "ec2:DisassociateAddress",
         "ec2:CreateNetworkInterface",
+        "ec2:CreateNetworkInterfacePermission",
         "ec2:DeleteNetworkInterface",
         "ec2:CreateTags",
         "ec2:DeleteTags",
@@ -66,7 +67,8 @@
         "ce:*",
         "cur:*",
         "pricing:*",
-        "cloudwatch:*"
+        "cloudwatch:*",
+        "cloudshell:*"
       ],
       "Resource": "*"
     },

@@ -35,7 +35,13 @@ Default VPC
 │
 ├── Security Groups
 │   ├── Lambda SG ──── egress: all traffic allowed, ingress: none
-│   └── Aurora SG ──── ingress: TCP 5432 from Lambda SG + allowed_cidrs (dev), egress: all
+│   ├── Aurora SG ──── ingress: TCP 5432 from Lambda SG + CloudShell SG, egress: all
+│   └── CloudShell SG ── egress: all traffic allowed, ingress: none
+│
+├── CloudShell VPC Access
+│   ├── Private Subnet (172.31.100.0/24) with NAT Gateway route
+│   ├── NAT Gateway (in public default subnet) + Elastic IP
+│   └── Route Table: 0.0.0.0/0 → NAT Gateway
 │
 ├── VPC Endpoints
 │   ├── S3 Gateway Endpoint (free, associated with default route tables)
@@ -146,7 +152,18 @@ infra/modules/networking/
 | Resource | Name | Ingress | Egress |
 |----------|------|---------|--------|
 | `aws_security_group.lambda` | `${var.project_name}-lambda-sg` | None | All traffic (0.0.0.0/0, all ports, all protocols) |
-| `aws_security_group.aurora` | `${var.project_name}-aurora-sg` | TCP 5432 from `aws_security_group.lambda.id`; TCP 5432 from `var.allowed_cidrs` (when non-empty, for dev) | All traffic |
+| `aws_security_group.aurora` | `${var.project_name}-aurora-sg` | TCP 5432 from `aws_security_group.lambda.id` and `aws_security_group.cloudshell.id` | All traffic |
+| `aws_security_group.cloudshell` | `${var.project_name}-cloudshell-sg` | None | All traffic (0.0.0.0/0, all ports, all protocols) |
+
+**CloudShell VPC access:**
+
+| Resource | Description |
+|----------|-------------|
+| `aws_subnet.cloudshell` | Private subnet `172.31.100.0/24` for CloudShell VPC environments |
+| `aws_eip.nat` | Elastic IP for the NAT gateway |
+| `aws_nat_gateway.this` | NAT gateway in a default public subnet (provides internet to CloudShell) |
+| `aws_route_table.cloudshell` | Route table with `0.0.0.0/0 -> nat_gateway` |
+| `aws_route_table_association.cloudshell` | Associates the CloudShell subnet with the private route table |
 
 **VPC endpoints:**
 
@@ -166,7 +183,6 @@ All resources are tagged with `var.tags`.
 |----------|------|---------|-------------|
 | `project_name` | `string` | — | Project name prefix for resource naming |
 | `aws_region` | `string` | — | AWS region for VPC endpoint service names |
-| `allowed_cidrs` | `list(string)` | `[]` | CIDR blocks allowed to access Aurora directly (dev only, e.g. operator IP) |
 | `tags` | `map(string)` | `{}` | Resource tags |
 
 ---
@@ -179,6 +195,8 @@ All resources are tagged with `var.tags`.
 | `subnet_ids` | `data.aws_subnets.default.ids` | Default VPC subnet IDs |
 | `lambda_security_group_id` | `aws_security_group.lambda.id` | Security group for Lambda functions |
 | `aurora_security_group_id` | `aws_security_group.aurora.id` | Security group for Aurora cluster |
+| `cloudshell_subnet_id` | `aws_subnet.cloudshell.id` | Private subnet for CloudShell VPC environments |
+| `cloudshell_security_group_id` | `aws_security_group.cloudshell.id` | Security group for CloudShell VPC environments |
 
 ---
 
@@ -212,7 +230,7 @@ infra/modules/aurora-vectordb/
 | `aws_db_subnet_group.aurora` | Subnet group | `name` = `${var.project_name}-aurora`, `subnet_ids` = `var.subnet_ids` |
 | `aws_rds_cluster.this` | Aurora cluster | `cluster_identifier` = `${var.project_name}-vectordb`, `engine` = `aurora-postgresql`, `engine_version` = `17.7`, `database_name` = `var.db_name`, `master_username` = `var.master_username`, `master_password` = `var.master_password`, `db_subnet_group_name` = subnet group, `vpc_security_group_ids` = `[var.security_group_id]`, `skip_final_snapshot` = `true`, `apply_immediately` = `true` |
 | `aws_rds_cluster.this` | Serverless v2 scaling | `serverless_v2_scaling_configuration { min_capacity = 0.5, max_capacity = 4 }` |
-| `aws_rds_cluster_instance.this` | Cluster instance | `cluster_identifier` = cluster, `instance_class` = `db.serverless`, `engine` = `aurora-postgresql`, `publicly_accessible` = `true` (dev, restricted via `allowed_cidrs` SG rule) |
+| `aws_rds_cluster_instance.this` | Cluster instance | `cluster_identifier` = cluster, `instance_class` = `db.serverless`, `engine` = `aurora-postgresql` |
 | `aws_secretsmanager_secret.db` | Secret | `name` = `${var.project_name}-aurora-credentials` |
 | `aws_secretsmanager_secret_version.db` | Secret value | JSON: `{host, port, dbname, username, password}` from cluster endpoint and variables |
 
@@ -392,11 +410,10 @@ Add the networking and Aurora modules to `infra/environments/dev/main.tf`.
 
 ```
 module "networking" {
-  source        = "../../modules/networking"
-  project_name  = var.project_name
-  aws_region    = var.aws_region
-  allowed_cidrs = var.allowed_cidrs
-  tags          = local.common_tags
+  source       = "../../modules/networking"
+  project_name = var.project_name
+  aws_region   = var.aws_region
+  tags         = local.common_tags
 }
 
 module "aurora_vectordb" {
@@ -414,7 +431,6 @@ module "aurora_vectordb" {
 | Variable | Type | Sensitive | Description |
 |----------|------|-----------|-------------|
 | `aurora_master_password` | `string` | `true` | Aurora master password. Pass via `TF_VAR_aurora_master_password` or `-var` |
-| `allowed_cidrs` | `list(string)` | — | CIDR blocks allowed to access Aurora directly (e.g. `["1.2.3.4/32"]`). Default `[]` |
 
 **New psycopg2 layer resource** (in `infra/environments/dev/main.tf`):
 
@@ -436,6 +452,8 @@ resource "aws_lambda_layer_version" "psycopg2" {
 | `aurora_db_name` | `module.aurora_vectordb.db_name` | Database name |
 | `vpc_id` | `module.networking.vpc_id` | VPC ID |
 | `lambda_security_group_id` | `module.networking.lambda_security_group_id` | Lambda security group |
+| `cloudshell_subnet_id` | `module.networking.cloudshell_subnet_id` | Private subnet for CloudShell VPC environments |
+| `cloudshell_security_group_id` | `module.networking.cloudshell_security_group_id` | Security group for CloudShell VPC environments |
 
 ---
 
@@ -472,44 +490,43 @@ resource "aws_lambda_layer_version" "psycopg2" {
 
 ### Step 1: Deploy infrastructure
 
-Aurora is made publicly accessible in dev so that local tools (`psql`, Alembic) can connect directly. Pass your IP via `allowed_cidrs` to restrict access:
-
 ```bash
 cd infra/environments/dev
-MY_IP=$(curl -4 -s ifconfig.me)
 terraform init
-terraform plan \
-  -var="aurora_master_password=YourSecurePassword123!" \
-  -var="allowed_cidrs=[\"${MY_IP}/32\"]"
-terraform apply \
-  -var="aurora_master_password=YourSecurePassword123!" \
-  -var="allowed_cidrs=[\"${MY_IP}/32\"]"
+terraform plan  -var="aurora_master_password=YourSecurePassword123!"
+terraform apply -var="aurora_master_password=YourSecurePassword123!"
 ```
 
-### Step 2: Run Alembic migrations
+### Step 2: Create CloudShell VPC environment
 
-Install the migration dependencies and run migrations using the wrapper script:
+Aurora is only accessible from within the VPC. Create a CloudShell VPC environment in the AWS Console:
+
+1. Open CloudShell, click the **+** icon, select **Create VPC environment**
+2. Select the default VPC, the `production-rag-cloudshell-subnet` subnet, and the `production-rag-cloudshell-sg` security group
+3. Use `terraform output cloudshell_subnet_id` and `terraform output cloudshell_security_group_id` for the exact IDs
+
+### Step 3: Run Alembic migrations (from CloudShell VPC)
+
+In the CloudShell VPC environment, install psql and run migrations:
 
 ```bash
-cd migrations && pip install -r requirements.txt && cd ..
-PGPASSWORD=YourSecurePassword123! bash scripts/run-migrations.sh
+sudo yum install -y postgresql15
+ENDPOINT="<aurora_cluster_endpoint from terraform output>"
+PGPASSWORD=YourSecurePassword123! alembic upgrade head
 ```
 
-Expected: Alembic reports the initial migration was applied.
+### Step 4: Verify with psql (from CloudShell VPC)
 
-### Step 3: Verify with psql
-
-Connect directly to Aurora and verify the schema:
+In the CloudShell VPC environment, verify the schema:
 
 ```bash
-ENDPOINT=$(terraform -chdir=infra/environments/dev output -raw aurora_cluster_endpoint)
 PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
 PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "\dt video_chunks"
 PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "\di idx_video_chunks_*"
 PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "SELECT * FROM alembic_version;"
 ```
 
-### Step 4: Check result
+### Step 5: Check result
 
 All four psql commands should return results confirming the pgvector extension, video_chunks table, indexes, and Alembic version `001`.
 
@@ -538,6 +555,7 @@ All four psql commands should return results confirming the pgvector extension, 
 | Migration files exist | `migrations/versions/001_initial_schema.py` exists with `upgrade` and `downgrade` |
 | lambda-vpc module exists | `infra/modules/lambda-vpc/` has main.tf, variables.tf, outputs.tf |
 | psycopg2 layer deployed | `aws lambda list-layer-versions --layer-name production-rag-psycopg2` returns a valid ARN |
-| Aurora is publicly accessible | `publicly_accessible = true` on instance; Aurora SG has ingress rule for `allowed_cidrs` |
-| psql connects from local machine | `psql -h ENDPOINT -U ragadmin -d ragdb -c "SELECT 1"` succeeds |
+| NAT gateway available | `aws ec2 describe-nat-gateways` shows NAT in `available` state |
+| CloudShell SG exists | `aws ec2 describe-security-groups` shows `production-rag-cloudshell-sg` |
+| CloudShell VPC env connects to Aurora | `psql -h ENDPOINT -U ragadmin -d ragdb -c "SELECT 1"` succeeds from CloudShell VPC environment |
 | Terraform plan is clean | `terraform plan` shows no pending changes after apply |

@@ -19,8 +19,3 @@ variable "aurora_master_password" {
   sensitive   = true
 }
 
-variable "allowed_cidrs" {
-  description = "CIDR blocks allowed to access Aurora directly (e.g. [\"1.2.3.4/32\"])"
-  type        = list(string)
-  default     = []
-}

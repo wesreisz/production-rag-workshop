@@ -56,3 +56,13 @@ output "lambda_security_group_id" {
   value       = module.networking.lambda_security_group_id
 }
 
+output "cloudshell_subnet_id" {
+  description = "Private subnet for CloudShell VPC environments"
+  value       = module.networking.cloudshell_subnet_id
+}
+
+output "cloudshell_security_group_id" {
+  description = "Security group for CloudShell VPC environments"
+  value       = module.networking.cloudshell_security_group_id
+}
+

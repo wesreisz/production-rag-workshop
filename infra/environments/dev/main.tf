@@ -111,11 +111,10 @@ module "chunk_transcript" {
 }
 
 module "networking" {
-  source        = "../../modules/networking"
-  project_name  = var.project_name
-  aws_region    = var.aws_region
-  allowed_cidrs = var.allowed_cidrs
-  tags          = local.common_tags
+  source       = "../../modules/networking"
+  project_name = var.project_name
+  aws_region   = var.aws_region
+  tags         = local.common_tags
 }
 
 module "aurora_vectordb" {

@@ -836,7 +836,7 @@ Error paths at each state → ErrorHandler → NotifyFailure
 - Min ACU: 0.5 (~$0.06/hr at minimum; does NOT auto-pause to zero)
 - Max ACU: 4 (sufficient for workshop load)
 - VPC: Default VPC with security group allowing Lambda access
-- Public access: Enabled in dev (restricted to operator IP via `allowed_cidrs`); disabled in production
+- Public access: Disabled (use AWS CloudShell for direct database access)
 
 **Database Schema (managed via Alembic migrations):**
 
@@ -890,8 +890,8 @@ CREATE TABLE videos (
 
 - Lambda functions for embedding and question modules must be VPC-attached to access Aurora
 - VPC endpoints for S3, Bedrock, and Secrets Manager to allow Lambda-in-VPC to reach AWS services without NAT Gateway
-- Security group: Allow PostgreSQL port (5432) inbound from Lambda security group and (in dev) from operator IP via `allowed_cidrs`
-- **Dev public access:** Aurora is made publicly accessible in dev environments with an `allowed_cidrs` variable that restricts access to the operator's IP. This enables local `psql` and Alembic access without a bastion host or VPN. This must NOT be used in production.
+- Security group: Allow PostgreSQL port (5432) inbound from Lambda security group and CloudShell security group
+- CloudShell VPC environment: A private subnet with NAT gateway enables CloudShell to access Aurora directly for psql, migrations, and ad-hoc queries. Students create the VPC environment manually in the AWS Console using Terraform-output subnet and security group IDs
 
 ### 8.3 IAM Roles (Least Privilege)
 
@@ -1285,7 +1285,7 @@ Each participant will have:
 |------|-----------|--------|------------|
 | **Bedrock model access not enabled** | High | Blocks embedding + question stages | Pre-workshop checklist; verify `aws bedrock list-foundation-models` works; have backup instructions |
 | **Aurora Serverless v2 cold start** | Medium | 30-60s delay on first query after pause | Pre-warm Aurora 15 min before embedding stage; set auto-pause timeout to 30 min during workshop |
-| **VPC networking issues** | Medium | Lambda can't reach Aurora | Provide pre-built Terraform networking module; test thoroughly; have fallback to RDS public access (dev only) |
+| **VPC networking issues** | Medium | Lambda can't reach Aurora | Provide pre-built Terraform networking module; test thoroughly; use CloudShell for direct DB access |
 | **AWS service quotas** | Low | Lambda concurrency, Bedrock throttling | Request quota increases pre-workshop; limit Step Functions Map concurrency to 5 |
 | **Participant AWS account issues** | Medium | Can't deploy infrastructure | Provide detailed setup guide; have 2-3 backup accounts; pair participants if needed |
 | **Terraform state conflicts** | Low | Deployment failures | Each participant uses unique prefix/workspace; bootstrap script handles state isolation |
