@@ -110,6 +110,30 @@ module "chunk_transcript" {
   })
 }
 
+module "networking" {
+  source        = "../../modules/networking"
+  project_name  = var.project_name
+  aws_region    = var.aws_region
+  allowed_cidrs = var.allowed_cidrs
+  tags          = local.common_tags
+}
+
+module "aurora_vectordb" {
+  source            = "../../modules/aurora-vectordb"
+  project_name      = var.project_name
+  subnet_ids        = module.networking.subnet_ids
+  security_group_id = module.networking.aurora_security_group_id
+  master_password   = var.aurora_master_password
+  tags              = local.common_tags
+}
+
+resource "aws_lambda_layer_version" "psycopg2" {
+  layer_name          = "${var.project_name}-psycopg2"
+  filename            = "${path.module}/../../../layers/psycopg2/psycopg2-layer.zip"
+  compatible_runtimes = ["python3.11"]
+  source_code_hash    = filebase64sha256("${path.module}/../../../layers/psycopg2/psycopg2-layer.zip")
+}
+
 resource "aws_sqs_queue" "embedding_dlq" {
   name                      = "${var.project_name}-embedding-dlq"
   message_retention_seconds = 86400

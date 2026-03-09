@@ -35,7 +35,7 @@ Default VPC
 │
 ├── Security Groups
 │   ├── Lambda SG ──── egress: all traffic allowed, ingress: none
-│   └── Aurora SG ──── ingress: TCP 5432 from Lambda SG only, egress: all
+│   └── Aurora SG ──── ingress: TCP 5432 from Lambda SG + allowed_cidrs (dev), egress: all
 │
 ├── VPC Endpoints
 │   ├── S3 Gateway Endpoint (free, associated with default route tables)
@@ -43,7 +43,7 @@ Default VPC
 │   └── Secrets Manager Interface Endpoint (com.amazonaws.{region}.secretsmanager)
 │
 └── Aurora Serverless v2
-    ├── Cluster: aurora-postgresql 15.4, serverless v2 (0.5–4 ACU)
+    ├── Cluster: aurora-postgresql 17.7, serverless v2 (0.5–4 ACU)
     ├── Instance: db.serverless
     ├── DB Subnet Group: default VPC subnets
     └── Secrets Manager: JSON {host, port, dbname, username, password}
@@ -146,7 +146,7 @@ infra/modules/networking/
 | Resource | Name | Ingress | Egress |
 |----------|------|---------|--------|
 | `aws_security_group.lambda` | `${var.project_name}-lambda-sg` | None | All traffic (0.0.0.0/0, all ports, all protocols) |
-| `aws_security_group.aurora` | `${var.project_name}-aurora-sg` | TCP 5432 from `aws_security_group.lambda.id` | All traffic |
+| `aws_security_group.aurora` | `${var.project_name}-aurora-sg` | TCP 5432 from `aws_security_group.lambda.id`; TCP 5432 from `var.allowed_cidrs` (when non-empty, for dev) | All traffic |
 
 **VPC endpoints:**
 
@@ -166,6 +166,7 @@ All resources are tagged with `var.tags`.
 |----------|------|---------|-------------|
 | `project_name` | `string` | — | Project name prefix for resource naming |
 | `aws_region` | `string` | — | AWS region for VPC endpoint service names |
+| `allowed_cidrs` | `list(string)` | `[]` | CIDR blocks allowed to access Aurora directly (dev only, e.g. operator IP) |
 | `tags` | `map(string)` | `{}` | Resource tags |
 
 ---
@@ -209,9 +210,9 @@ infra/modules/aurora-vectordb/
 | Resource | Type | Key Settings |
 |----------|------|-------------|
 | `aws_db_subnet_group.aurora` | Subnet group | `name` = `${var.project_name}-aurora`, `subnet_ids` = `var.subnet_ids` |
-| `aws_rds_cluster.this` | Aurora cluster | `cluster_identifier` = `${var.project_name}-vectordb`, `engine` = `aurora-postgresql`, `engine_version` = `15.4`, `database_name` = `var.db_name`, `master_username` = `var.master_username`, `master_password` = `var.master_password`, `db_subnet_group_name` = subnet group, `vpc_security_group_ids` = `[var.security_group_id]`, `skip_final_snapshot` = `true`, `apply_immediately` = `true` |
+| `aws_rds_cluster.this` | Aurora cluster | `cluster_identifier` = `${var.project_name}-vectordb`, `engine` = `aurora-postgresql`, `engine_version` = `17.7`, `database_name` = `var.db_name`, `master_username` = `var.master_username`, `master_password` = `var.master_password`, `db_subnet_group_name` = subnet group, `vpc_security_group_ids` = `[var.security_group_id]`, `skip_final_snapshot` = `true`, `apply_immediately` = `true` |
 | `aws_rds_cluster.this` | Serverless v2 scaling | `serverless_v2_scaling_configuration { min_capacity = 0.5, max_capacity = 4 }` |
-| `aws_rds_cluster_instance.this` | Cluster instance | `cluster_identifier` = cluster, `instance_class` = `db.serverless`, `engine` = `aurora-postgresql`, `publicly_accessible` = `false` |
+| `aws_rds_cluster_instance.this` | Cluster instance | `cluster_identifier` = cluster, `instance_class` = `db.serverless`, `engine` = `aurora-postgresql`, `publicly_accessible` = `true` (dev, restricted via `allowed_cidrs` SG rule) |
 | `aws_secretsmanager_secret.db` | Secret | `name` = `${var.project_name}-aurora-credentials` |
 | `aws_secretsmanager_secret_version.db` | Secret value | JSON: `{host, port, dbname, username, password}` from cluster endpoint and variables |
 
@@ -391,10 +392,11 @@ Add the networking and Aurora modules to `infra/environments/dev/main.tf`.
 
 ```
 module "networking" {
-  source       = "../../modules/networking"
-  project_name = var.project_name
-  aws_region   = var.aws_region
-  tags         = local.common_tags
+  source        = "../../modules/networking"
+  project_name  = var.project_name
+  aws_region    = var.aws_region
+  allowed_cidrs = var.allowed_cidrs
+  tags          = local.common_tags
 }
 
 module "aurora_vectordb" {
@@ -412,6 +414,7 @@ module "aurora_vectordb" {
 | Variable | Type | Sensitive | Description |
 |----------|------|-----------|-------------|
 | `aurora_master_password` | `string` | `true` | Aurora master password. Pass via `TF_VAR_aurora_master_password` or `-var` |
+| `allowed_cidrs` | `list(string)` | — | CIDR blocks allowed to access Aurora directly (e.g. `["1.2.3.4/32"]`). Default `[]` |
 
 **New psycopg2 layer resource** (in `infra/environments/dev/main.tf`):
 
@@ -442,7 +445,7 @@ resource "aws_lambda_layer_version" "psycopg2" {
 - [ ] 2. Create `infra/modules/networking/main.tf` with default VPC data source, subnets data source, route tables data source, Lambda security group, Aurora security group, S3 gateway endpoint, Bedrock interface endpoint, Secrets Manager interface endpoint
 - [ ] 3. Create `infra/modules/networking/outputs.tf` with `vpc_id`, `subnet_ids`, `lambda_security_group_id`, `aurora_security_group_id`
 - [ ] 4. Create `infra/modules/aurora-vectordb/variables.tf` with `project_name`, `subnet_ids`, `security_group_id`, `db_name`, `master_username`, `master_password`, `tags`
-- [ ] 5. Create `infra/modules/aurora-vectordb/main.tf` with DB subnet group, Aurora cluster (aurora-postgresql 15.4, serverless v2 0.5–4 ACU), cluster instance (db.serverless), Secrets Manager secret and version
+- [ ] 5. Create `infra/modules/aurora-vectordb/main.tf` with DB subnet group, Aurora cluster (aurora-postgresql 17.7, serverless v2 0.5–4 ACU), cluster instance (db.serverless), Secrets Manager secret and version
 - [ ] 6. Create `infra/modules/aurora-vectordb/outputs.tf` with `cluster_endpoint`, `cluster_port`, `secret_arn`, `cluster_arn`, `db_name`
 - [ ] 7. Create `infra/modules/lambda-vpc/variables.tf` (all variables from `infra/modules/lambda/variables.tf` plus `subnet_ids`, `security_group_ids`, `layers`)
 - [ ] 8. Create `infra/modules/lambda-vpc/main.tf` (copy of `infra/modules/lambda/main.tf` plus `vpc_config` block, `layers` attribute, `AWSLambdaVPCAccessExecutionRole` policy attachment)
@@ -469,45 +472,21 @@ resource "aws_lambda_layer_version" "psycopg2" {
 
 ### Step 1: Deploy infrastructure
 
+Aurora is made publicly accessible in dev so that local tools (`psql`, Alembic) can connect directly. Pass your IP via `allowed_cidrs` to restrict access:
+
 ```bash
 cd infra/environments/dev
+MY_IP=$(curl -4 -s ifconfig.me)
 terraform init
-terraform plan -var="aurora_master_password=YourSecurePassword123!"
-terraform apply -var="aurora_master_password=YourSecurePassword123!"
+terraform plan \
+  -var="aurora_master_password=YourSecurePassword123!" \
+  -var="allowed_cidrs=[\"${MY_IP}/32\"]"
+terraform apply \
+  -var="aurora_master_password=YourSecurePassword123!" \
+  -var="allowed_cidrs=[\"${MY_IP}/32\"]"
 ```
 
-### Step 2: Verify Aurora cluster is available
-
-```bash
-ENDPOINT=$(terraform output -raw aurora_cluster_endpoint)
-echo "Aurora endpoint: $ENDPOINT"
-
-aws rds describe-db-clusters \
-  --db-cluster-identifier production-rag-vectordb \
-  --query 'DBClusters[0].Status' \
-  --output text
-```
-
-Expected: `available`
-
-### Step 3: Verify Secrets Manager
-
-```bash
-SECRET_ARN=$(terraform output -raw aurora_secret_arn)
-aws secretsmanager get-secret-value \
-  --secret-id "$SECRET_ARN" \
-  --query 'SecretString' \
-  --output text | python3 -c "
-import json, sys
-creds = json.loads(sys.stdin.read())
-print('Host:', creds['host'])
-print('Port:', creds['port'])
-print('DB:', creds['dbname'])
-print('User:', creds['username'])
-"
-```
-
-### Step 4: Run Alembic migrations
+### Step 2: Run Alembic migrations
 
 Install the migration dependencies and run migrations using the wrapper script:
 
@@ -518,55 +497,21 @@ PGPASSWORD=YourSecurePassword123! bash scripts/run-migrations.sh
 
 Expected: Alembic reports the initial migration was applied.
 
-### Step 5: Verify pgvector extension
+### Step 3: Verify with psql
+
+Connect directly to Aurora and verify the schema:
 
 ```bash
 ENDPOINT=$(terraform -chdir=infra/environments/dev output -raw aurora_cluster_endpoint)
-DB_NAME=$(terraform -chdir=infra/environments/dev output -raw aurora_db_name)
-
-PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d "$DB_NAME" -c \
-  "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector';"
+PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
+PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "\dt video_chunks"
+PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "\di idx_video_chunks_*"
+PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "SELECT * FROM alembic_version;"
 ```
 
-Expected: One row showing `vector` with a version number.
+### Step 4: Check result
 
-### Step 6: Verify table and indexes
-
-```bash
-PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d "$DB_NAME" -c \
-  "\dt video_chunks"
-```
-
-Expected: Shows the `video_chunks` table.
-
-```bash
-PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d "$DB_NAME" -c \
-  "\di idx_video_chunks_*"
-```
-
-Expected: Shows `idx_video_chunks_embedding`, `idx_video_chunks_video_id`, `idx_video_chunks_speaker`.
-
-### Step 7: Verify VPC endpoints
-
-```bash
-aws ec2 describe-vpc-endpoints \
-  --filters "Name=tag:Project,Values=production-rag" \
-  --query 'VpcEndpoints[].{Service: ServiceName, Type: VpcEndpointType, State: State}' \
-  --output table
-```
-
-Expected: Three endpoints (s3 Gateway, bedrock-runtime Interface, secretsmanager Interface), all in `available` state.
-
-### Step 8: Verify psycopg2 layer
-
-```bash
-aws lambda list-layer-versions \
-  --layer-name production-rag-psycopg2 \
-  --query 'LayerVersions[0].LayerVersionArn' \
-  --output text
-```
-
-Expected: Returns a valid layer ARN.
+All four psql commands should return results confirming the pgvector extension, video_chunks table, indexes, and Alembic version `001`.
 
 ---
 
@@ -593,4 +538,6 @@ Expected: Returns a valid layer ARN.
 | Migration files exist | `migrations/versions/001_initial_schema.py` exists with `upgrade` and `downgrade` |
 | lambda-vpc module exists | `infra/modules/lambda-vpc/` has main.tf, variables.tf, outputs.tf |
 | psycopg2 layer deployed | `aws lambda list-layer-versions --layer-name production-rag-psycopg2` returns a valid ARN |
+| Aurora is publicly accessible | `publicly_accessible = true` on instance; Aurora SG has ingress rule for `allowed_cidrs` |
+| psql connects from local machine | `psql -h ENDPOINT -U ragadmin -d ragdb -c "SELECT 1"` succeeds |
 | Terraform plan is clean | `terraform plan` shows no pending changes after apply |

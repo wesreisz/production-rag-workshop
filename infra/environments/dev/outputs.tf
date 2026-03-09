@@ -30,3 +30,29 @@ output "embedding_queue_arn" {
   description = "Embedding fan-out queue ARN"
   value       = aws_sqs_queue.embedding.arn
 }
+
+output "aurora_cluster_endpoint" {
+  description = "Aurora writer endpoint"
+  value       = module.aurora_vectordb.cluster_endpoint
+}
+
+output "aurora_secret_arn" {
+  description = "Secrets Manager secret ARN"
+  value       = module.aurora_vectordb.secret_arn
+}
+
+output "aurora_db_name" {
+  description = "Database name"
+  value       = module.aurora_vectordb.db_name
+}
+
+output "vpc_id" {
+  description = "VPC ID"
+  value       = module.networking.vpc_id
+}
+
+output "lambda_security_group_id" {
+  description = "Lambda security group"
+  value       = module.networking.lambda_security_group_id
+}
+

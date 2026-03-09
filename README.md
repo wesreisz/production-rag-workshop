@@ -48,13 +48,33 @@ Video Upload ──▶ S3 ──▶ EventBridge ──▶ Step Functions
 | 17:15 | 60 min | MCP Server & Cursor Integration |
 | 18:15 | 30 min | Wrap-Up: Production Concerns & Next Steps |
 
-## Prerequisites
+## Local Prerequisites
 
-- Python 3.11+
-- AWS CLI v2
-- Terraform >= 1.5
-- Cursor IDE
-- Git
+Install all of the following before starting the workshop.
+
+| Tool | Minimum Version | Why It's Needed | Install |
+|------|----------------|-----------------|---------|
+| **Git** | 2.x | Clone the repo, version control | [git-scm.com](https://git-scm.com/) |
+| **Python** | 3.11+ | Lambda runtime, migrations, verify scripts. Must include `pip` and `venv`. | [python.org](https://www.python.org/downloads/) |
+| **AWS CLI** | v2 | Deploy, invoke, and verify all AWS resources | [AWS CLI install guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html) |
+| **Terraform** | >= 1.5 | Provision all infrastructure (VPC, Aurora, Lambda, Step Functions, etc.) | [developer.hashicorp.com](https://developer.hashicorp.com/terraform/install) |
+| **Docker** | 20+ | Build the `psycopg2` Lambda layer (`scripts/build-psycopg2-layer.sh`) | [docs.docker.com](https://docs.docker.com/get-started/get-docker/) |
+| **Cursor IDE** | Latest | AI-assisted development, MCP server integration (free tier is sufficient) | [cursor.com](https://www.cursor.com/) |
+
+### Verify your setup
+
+```bash
+git --version          # git version 2.x
+python3 --version      # Python 3.11+
+pip3 --version         # pip 24+
+aws --version          # aws-cli/2.x
+terraform --version    # Terraform v1.5+
+docker --version       # Docker 20+
+```
+
+### AWS account setup
+
+You also need an AWS account with billing enabled (or a provided workshop account). After installing the AWS CLI, configure credentials so that `aws sts get-caller-identity` succeeds. In the AWS Console, navigate to **Amazon Bedrock > Model Access** and request access to `amazon.titan-embed-text-v2:0` and `anthropic.claude-3-haiku`.
 
 ---
 

@@ -23,5 +23,8 @@ venv/
 # macOS
 .DS_Store
 
+# Lambda layers (build artifacts)
+layers/
+
 # Large binary samples
 samples/*.mp4

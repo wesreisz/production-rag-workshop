@@ -831,12 +831,12 @@ Error paths at each state → ErrorHandler → NotifyFailure
 
 **Database Configuration:**
 
-- Engine: Aurora PostgreSQL 15.x (pgvector compatible)
+- Engine: Aurora PostgreSQL 17.x (pgvector compatible)
 - Instance class: `db.serverless` (Aurora Serverless v2)
 - Min ACU: 0.5 (~$0.06/hr at minimum; does NOT auto-pause to zero)
 - Max ACU: 4 (sufficient for workshop load)
 - VPC: Default VPC with security group allowing Lambda access
-- Public access: Disabled (Lambda connects via VPC)
+- Public access: Enabled in dev (restricted to operator IP via `allowed_cidrs`); disabled in production
 
 **Database Schema (managed via Alembic migrations):**
 
@@ -890,7 +890,8 @@ CREATE TABLE videos (
 
 - Lambda functions for embedding and question modules must be VPC-attached to access Aurora
 - VPC endpoints for S3, Bedrock, and Secrets Manager to allow Lambda-in-VPC to reach AWS services without NAT Gateway
-- Security group: Allow PostgreSQL port (5432) inbound only from Lambda security group
+- Security group: Allow PostgreSQL port (5432) inbound from Lambda security group and (in dev) from operator IP via `allowed_cidrs`
+- **Dev public access:** Aurora is made publicly accessible in dev environments with an `allowed_cidrs` variable that restricts access to the operator's IP. This enables local `psql` and Alembic access without a bastion host or VPN. This must NOT be used in production.
 
 ### 8.3 IAM Roles (Least Privilege)
 
