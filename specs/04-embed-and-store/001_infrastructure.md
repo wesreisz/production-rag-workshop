@@ -35,13 +35,7 @@ Default VPC
 │
 ├── Security Groups
 │   ├── Lambda SG ──── egress: all traffic allowed, ingress: none
-│   ├── Aurora SG ──── ingress: TCP 5432 from Lambda SG + CloudShell SG, egress: all
-│   └── CloudShell SG ── egress: all traffic allowed, ingress: none
-│
-├── CloudShell VPC Access
-│   ├── Private Subnet (172.31.100.0/24) with NAT Gateway route
-│   ├── NAT Gateway (in public default subnet) + Elastic IP
-│   └── Route Table: 0.0.0.0/0 → NAT Gateway
+│   └── Aurora SG ──── ingress: TCP 5432 from Lambda SG, egress: all
 │
 ├── VPC Endpoints
 │   ├── S3 Gateway Endpoint (free, associated with default route tables)
@@ -55,7 +49,7 @@ Default VPC
     └── Secrets Manager: JSON {host, port, dbname, username, password}
 ```
 
-VPC endpoints allow Lambda functions running inside the VPC to reach S3, Bedrock, and Secrets Manager without a NAT Gateway. The S3 gateway endpoint is free. The Bedrock and Secrets Manager interface endpoints cost ~$0.01/hr each.
+VPC endpoints allow Lambda functions running inside the VPC to reach S3, Bedrock, and Secrets Manager without a NAT Gateway. The S3 gateway endpoint is free. The Bedrock and Secrets Manager interface endpoints cost ~$0.01/hr per AZ each. To minimize cost for the workshop, both interface endpoints are pinned to a single AZ (one subnet) instead of all default subnets.
 
 ---
 
@@ -152,26 +146,15 @@ infra/modules/networking/
 | Resource | Name | Ingress | Egress |
 |----------|------|---------|--------|
 | `aws_security_group.lambda` | `${var.project_name}-lambda-sg` | None | All traffic (0.0.0.0/0, all ports, all protocols) |
-| `aws_security_group.aurora` | `${var.project_name}-aurora-sg` | TCP 5432 from `aws_security_group.lambda.id` and `aws_security_group.cloudshell.id` | All traffic |
-| `aws_security_group.cloudshell` | `${var.project_name}-cloudshell-sg` | None | All traffic (0.0.0.0/0, all ports, all protocols) |
-
-**CloudShell VPC access:**
-
-| Resource | Description |
-|----------|-------------|
-| `aws_subnet.cloudshell` | Private subnet `172.31.100.0/24` for CloudShell VPC environments |
-| `aws_eip.nat` | Elastic IP for the NAT gateway |
-| `aws_nat_gateway.this` | NAT gateway in a default public subnet (provides internet to CloudShell) |
-| `aws_route_table.cloudshell` | Route table with `0.0.0.0/0 -> nat_gateway` |
-| `aws_route_table_association.cloudshell` | Associates the CloudShell subnet with the private route table |
+| `aws_security_group.aurora` | `${var.project_name}-aurora-sg` | TCP 5432 from `aws_security_group.lambda.id` | All traffic |
 
 **VPC endpoints:**
 
 | Resource | Service | Type | Notes |
 |----------|---------|------|-------|
 | `aws_vpc_endpoint.s3` | `com.amazonaws.${var.aws_region}.s3` | `Gateway` | `route_table_ids` = `data.aws_route_tables.default.ids` |
-| `aws_vpc_endpoint.bedrock` | `com.amazonaws.${var.aws_region}.bedrock-runtime` | `Interface` | `subnet_ids` = `data.aws_subnets.default.ids`, `security_group_ids` = `[aws_security_group.lambda.id]`, `private_dns_enabled` = `true` |
-| `aws_vpc_endpoint.secretsmanager` | `com.amazonaws.${var.aws_region}.secretsmanager` | `Interface` | `subnet_ids` = `data.aws_subnets.default.ids`, `security_group_ids` = `[aws_security_group.lambda.id]`, `private_dns_enabled` = `true` |
+| `aws_vpc_endpoint.bedrock` | `com.amazonaws.${var.aws_region}.bedrock-runtime` | `Interface` | `subnet_ids` = `[tolist(data.aws_subnets.default.ids)[0]]` (single AZ), `security_group_ids` = `[aws_security_group.lambda.id]`, `private_dns_enabled` = `true` |
+| `aws_vpc_endpoint.secretsmanager` | `com.amazonaws.${var.aws_region}.secretsmanager` | `Interface` | `subnet_ids` = `[tolist(data.aws_subnets.default.ids)[0]]` (single AZ), `security_group_ids` = `[aws_security_group.lambda.id]`, `private_dns_enabled` = `true` |
 
 All resources are tagged with `var.tags`.
 
@@ -195,8 +178,6 @@ All resources are tagged with `var.tags`.
 | `subnet_ids` | `data.aws_subnets.default.ids` | Default VPC subnet IDs |
 | `lambda_security_group_id` | `aws_security_group.lambda.id` | Security group for Lambda functions |
 | `aurora_security_group_id` | `aws_security_group.aurora.id` | Security group for Aurora cluster |
-| `cloudshell_subnet_id` | `aws_subnet.cloudshell.id` | Private subnet for CloudShell VPC environments |
-| `cloudshell_security_group_id` | `aws_security_group.cloudshell.id` | Security group for CloudShell VPC environments |
 
 ---
 
@@ -404,7 +385,7 @@ Database schema is managed via **Alembic** migrations rather than ad-hoc SQL scr
 
 ### Part E-2: Automated Schema Migration via Lambda
 
-The manual CloudShell workflow for running Alembic migrations (Part E, Verification Steps 2–4) requires participants to create a VPC environment, install psql, and run commands by hand. This is error-prone in a workshop setting.
+Running Alembic migrations manually requires direct database access, which is error-prone in a workshop setting.
 
 To eliminate this friction, a **migration Lambda** runs the schema SQL automatically during `terraform apply`:
 
@@ -480,15 +461,13 @@ resource "aws_lambda_layer_version" "psycopg2" {
 | `aurora_db_name` | `module.aurora_vectordb.db_name` | Database name |
 | `vpc_id` | `module.networking.vpc_id` | VPC ID |
 | `lambda_security_group_id` | `module.networking.lambda_security_group_id` | Lambda security group |
-| `cloudshell_subnet_id` | `module.networking.cloudshell_subnet_id` | Private subnet for CloudShell VPC environments |
-| `cloudshell_security_group_id` | `module.networking.cloudshell_security_group_id` | Security group for CloudShell VPC environments |
 
 ---
 
 ## Implementation Checklist
 
 - [ ] 1. Create `infra/modules/networking/variables.tf` with `project_name`, `aws_region`, `tags`
-- [ ] 2. Create `infra/modules/networking/main.tf` with default VPC data source, subnets data source, route tables data source, Lambda security group, Aurora security group, S3 gateway endpoint, Bedrock interface endpoint, Secrets Manager interface endpoint
+- [ ] 2. Create `infra/modules/networking/main.tf` with default VPC data source, subnets data source, route tables data source, Lambda security group, Aurora security group, S3 gateway endpoint, Bedrock interface endpoint (single AZ), Secrets Manager interface endpoint (single AZ)
 - [ ] 3. Create `infra/modules/networking/outputs.tf` with `vpc_id`, `subnet_ids`, `lambda_security_group_id`, `aurora_security_group_id`
 - [ ] 4. Create `infra/modules/aurora-vectordb/variables.tf` with `project_name`, `subnet_ids`, `security_group_id`, `db_name`, `master_username`, `master_password`, `tags`
 - [ ] 5. Create `infra/modules/aurora-vectordb/main.tf` with DB subnet group, Aurora cluster (aurora-postgresql 17.7, serverless v2 0.5–4 ACU), cluster instance (db.serverless), Secrets Manager secret and version
@@ -525,38 +504,22 @@ terraform plan  -var="aurora_master_password=YourSecurePassword123!"
 terraform apply -var="aurora_master_password=YourSecurePassword123!"
 ```
 
-### Step 2: Create CloudShell VPC environment
+### Step 2: Verify schema via RDS Query Editor
 
-Aurora is only accessible from within the VPC. Create a CloudShell VPC environment in the AWS Console:
+Aurora is only accessible from within the VPC. Use the **RDS Query Editor** in the AWS Console to verify the schema:
 
-1. Open CloudShell, click the **+** icon, select **Create VPC environment**
-2. Select the default VPC, the `production-rag-cloudshell-subnet` subnet, and the `production-rag-cloudshell-sg` security group
-3. Use `terraform output cloudshell_subnet_id` and `terraform output cloudshell_security_group_id` for the exact IDs
+1. Open the RDS Console, select the `production-rag-vectordb` cluster
+2. Click **Query** to open the Query Editor
+3. Connect using the Secrets Manager secret (`production-rag-aurora-credentials`)
+4. Run these verification queries:
 
-### Step 3: Run Alembic migrations (from CloudShell VPC)
-
-In the CloudShell VPC environment, install psql and run migrations:
-
-```bash
-sudo yum install -y postgresql15
-ENDPOINT="<aurora_cluster_endpoint from terraform output>"
-PGPASSWORD=YourSecurePassword123! alembic upgrade head
+```sql
+SELECT extname FROM pg_extension WHERE extname = 'vector';
+SELECT table_name FROM information_schema.tables WHERE table_name = 'video_chunks';
+SELECT indexname FROM pg_indexes WHERE tablename = 'video_chunks';
 ```
 
-### Step 4: Verify with psql (from CloudShell VPC)
-
-In the CloudShell VPC environment, verify the schema:
-
-```bash
-PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "SELECT extname FROM pg_extension WHERE extname = 'vector';"
-PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "\dt video_chunks"
-PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "\di idx_video_chunks_*"
-PGPASSWORD=YourSecurePassword123! psql -h "$ENDPOINT" -U ragadmin -d ragdb -c "SELECT * FROM alembic_version;"
-```
-
-### Step 5: Check result
-
-All four psql commands should return results confirming the pgvector extension, video_chunks table, indexes, and Alembic version `001`.
+All queries should return results confirming the pgvector extension, video_chunks table, and indexes.
 
 ---
 
@@ -583,7 +546,4 @@ All four psql commands should return results confirming the pgvector extension, 
 | Migration files exist | `migrations/versions/001_initial_schema.py` exists with `upgrade` and `downgrade` |
 | lambda-vpc module exists | `infra/modules/lambda-vpc/` has main.tf, variables.tf, outputs.tf |
 | psycopg2 layer deployed | `aws lambda list-layer-versions --layer-name production-rag-psycopg2` returns a valid ARN |
-| NAT gateway available | `aws ec2 describe-nat-gateways` shows NAT in `available` state |
-| CloudShell SG exists | `aws ec2 describe-security-groups` shows `production-rag-cloudshell-sg` |
-| CloudShell VPC env connects to Aurora | `psql -h ENDPOINT -U ragadmin -d ragdb -c "SELECT 1"` succeeds from CloudShell VPC environment |
 | Terraform plan is clean | `terraform plan` shows no pending changes after apply |
