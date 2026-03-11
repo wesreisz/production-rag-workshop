@@ -69,6 +69,47 @@ class TestDetectMediaFormat:
             service.detect_media_format("uploads/sample.txt")
 
 
+class TestGetObjectMetadata:
+    @mock_aws
+    def test_returns_speaker_and_title(self):
+        # Arrange
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket="test-bucket")
+        s3.put_object(
+            Bucket="test-bucket",
+            Key="uploads/sample.mp4",
+            Body=b"fake video",
+            Metadata={"speaker": "Jane Doe", "title": "Building RAG Systems"},
+        )
+        service = TranscribeService()
+
+        # Act
+        result = service.get_object_metadata("test-bucket", "uploads/sample.mp4")
+
+        # Assert
+        assert result["speaker"] == "Jane Doe"
+        assert result["title"] == "Building RAG Systems"
+
+    @mock_aws
+    def test_returns_none_when_metadata_absent(self):
+        # Arrange
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket="test-bucket")
+        s3.put_object(
+            Bucket="test-bucket",
+            Key="uploads/sample.mp4",
+            Body=b"fake video",
+        )
+        service = TranscribeService()
+
+        # Act
+        result = service.get_object_metadata("test-bucket", "uploads/sample.mp4")
+
+        # Assert
+        assert result["speaker"] is None
+        assert result["title"] is None
+
+
 class TestStartJob:
     @mock_aws
     @patch("src.services.transcribe_service.time.time", return_value=1700000000)

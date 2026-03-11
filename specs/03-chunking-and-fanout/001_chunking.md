@@ -69,6 +69,8 @@ After `TranscriptionSucceeded`, the full state machine payload looks like this. 
       "bucket_name": "production-rag-media-123456789012",
       "source_key": "uploads/hello-my_name_is_wes.mp3",
       "video_id": "hello-my_name_is_wes",
+      "speaker": "Jane Doe",
+      "title": "Building RAG Systems",
       "status": "COMPLETED"
     },
     "statusCode": 200
@@ -150,6 +152,8 @@ Each chunk is stored as an individual JSON file in S3 at `chunks/{video_id}/chun
 | `word_count` | `int` | Number of words in the chunk (proxy for token count) |
 | `start_time` | `float` | Start timestamp in seconds from the first word |
 | `end_time` | `float` | End timestamp in seconds from the last word |
+| `metadata.speaker` | `string` (nullable) | Speaker name (from S3 object user metadata, propagated via transcription handler) |
+| `metadata.title` | `string` (nullable) | Video title (from S3 object user metadata, propagated via transcription handler) |
 | `metadata.source_s3_key` | `string` | Original uploaded file S3 key |
 | `metadata.total_chunks` | `int` | Total number of chunks produced for this video |
 
@@ -258,10 +262,14 @@ modules/chunking-module/
     "bucket_name": "production-rag-media-123456789012",
     "transcript_s3_key": "transcripts/hello-my_name_is_wes/raw.json",
     "video_id": "hello-my_name_is_wes",
-    "source_key": "uploads/hello-my_name_is_wes.mp3"
+    "source_key": "uploads/hello-my_name_is_wes.mp3",
+    "speaker": "Jane Doe",
+    "title": "Building RAG Systems"
   }
 }
 ```
+
+The `speaker` and `title` fields are propagated from the transcription handler (which reads them from S3 object user metadata). Both are nullable.
 
 **Output (returned to Step Functions):**
 
@@ -285,12 +293,12 @@ modules/chunking-module/
 
 **Handler responsibilities:**
 
-1. Extract `detail.bucket_name`, `detail.transcript_s3_key`, `detail.video_id`, `detail.source_key` from event
+1. Extract `detail.bucket_name`, `detail.transcript_s3_key`, `detail.video_id`, `detail.source_key`, `detail.speaker` (nullable), `detail.title` (nullable) from event
 2. Call `ChunkingService.read_transcript(bucket, transcript_key)` to get the raw transcript JSON from S3
 3. Call `ChunkingService.parse_timed_words(transcript_json)` to extract timed words
-4. Call `ChunkingService.chunk(timed_words, video_id, source_key)` to produce chunk objects
+4. Call `ChunkingService.chunk(timed_words, video_id, source_key, speaker, title)` to produce chunk objects (speaker/title stored in each chunk's metadata)
 5. Call `ChunkingService.store_chunks(bucket, video_id, chunks)` to write chunk JSONs to S3
-6. Call `ChunkingService.publish_chunks(queue_url, chunk_keys, bucket, video_id)` to publish each chunk S3 key as a message to the SQS embedding queue
+6. Call `ChunkingService.publish_chunks(queue_url, chunk_keys, bucket, video_id, speaker, title)` to publish each chunk S3 key as a message to the SQS embedding queue (speaker/title included in each message body)
 7. Return standardized response with chunk keys, count, and messages_published
 
 **Error handling:** Same pattern as transcribe handlers — `ValueError` → 400, unhandled exceptions → 500.
@@ -306,9 +314,9 @@ Business logic layer. All S3 I/O, chunking logic, and SQS publishing lives here.
 | `read_transcript(bucket, key)` | bucket name, S3 key | `dict` (parsed JSON) | Read and parse the raw transcript JSON from S3 |
 | `parse_timed_words(transcript)` | transcript dict | `list[dict]` | Extract timed words from `results.items`, attach punctuation to preceding word |
 | `build_sentences(timed_words)` | list of timed words | `list[dict]` | Group timed words into sentences, splitting on `.` `!` `?` |
-| `chunk(timed_words, video_id, source_key)` | timed words, video_id, source_key | `list[dict]` | Full chunking pipeline: build sentences → group into chunks → build chunk objects |
+| `chunk(timed_words, video_id, source_key, speaker, title)` | timed words, video_id, source_key, speaker (nullable), title (nullable) | `list[dict]` | Full chunking pipeline: build sentences → group into chunks → build chunk objects with speaker/title in metadata |
 | `store_chunks(bucket, video_id, chunks)` | bucket, video_id, list of chunk dicts | `list[str]` | Write each chunk as JSON to S3, return list of S3 keys |
-| `publish_chunks(queue_url, chunk_keys, bucket, video_id)` | SQS queue URL, list of S3 keys, bucket, video_id | `int` | Publish one SQS message per chunk key, return count of messages published |
+| `publish_chunks(queue_url, chunk_keys, bucket, video_id, speaker, title)` | SQS queue URL, list of S3 keys, bucket, video_id, speaker (nullable), title (nullable) | `int` | Publish one SQS message per chunk key (message body includes speaker/title), return count |
 
 **Edge case:** If no sentence-ending punctuation is found in the entire transcript, `build_sentences` treats the whole text as one sentence.
 
@@ -414,9 +422,13 @@ Create the SQS queue that the chunking Lambda publishes to. The embedding Lambda
 {
   "chunk_s3_key": "chunks/hello-my_name_is_wes/chunk-001.json",
   "bucket": "production-rag-media-123456789012",
-  "video_id": "hello-my_name_is_wes"
+  "video_id": "hello-my_name_is_wes",
+  "speaker": "Jane Doe",
+  "title": "Building RAG Systems"
 }
 ```
+
+The `speaker` and `title` fields are nullable — they are `null` if S3 object user metadata was not set at upload time.
 
 ---
 
@@ -446,6 +458,8 @@ ChunkTranscript:
         transcript_s3_key.$: $.transcription.detail.transcript_s3_key
         video_id.$: $.transcription.detail.video_id
         source_key.$: $.transcription.detail.source_key
+        speaker.$: $.transcription.detail.speaker
+        title.$: $.transcription.detail.title
   ResultPath: $.chunking
   ResultSelector:
     detail.$: $.Payload.detail
@@ -536,15 +550,15 @@ Add Lambda invoke permission for the chunking function to the existing `sfn_lamb
 - [ ] 2. Create `modules/chunking-module/dev-requirements.txt` with `pytest`, `moto[s3]`
 - [ ] 3. Create all `__init__.py` files (`src/`, `src/handlers/`, `src/services/`, `src/utils/`, `tests/`, `tests/unit/`)
 - [ ] 4. Create `modules/chunking-module/src/utils/logger.py` (content specified in Part A)
-- [ ] 5. Create `modules/chunking-module/src/services/chunking_service.py` with `read_transcript`, `parse_timed_words`, `build_sentences`, `chunk`, `store_chunks`, `publish_chunks`
-- [ ] 6. Create `modules/chunking-module/src/handlers/chunk_transcript.py` handler (reads `EMBEDDING_QUEUE_URL` env var, calls `publish_chunks`)
+- [ ] 5. Create `modules/chunking-module/src/services/chunking_service.py` with `read_transcript`, `parse_timed_words`, `build_sentences`, `chunk` (accepts `speaker`/`title`), `store_chunks`, `publish_chunks` (accepts `speaker`/`title`)
+- [ ] 6. Create `modules/chunking-module/src/handlers/chunk_transcript.py` handler (extracts `speaker`/`title` from event detail, passes to service methods)
 - [ ] 7. Create `modules/chunking-module/tests/conftest.py` with shared fixtures
 - [ ] 8. Create `modules/chunking-module/tests/unit/test_chunking_service.py` with unit tests (including SQS publish tests)
 - [ ] 9. Add SQS embedding queue and DLQ resources to `infra/environments/dev/main.tf`
 - [ ] 10. Add `chunk_transcript` Lambda module call to `infra/environments/dev/main.tf` (include `EMBEDDING_QUEUE_URL` env var)
 - [ ] 11. Add `sqs:SendMessage` to chunking Lambda IAM policy for the embedding queue ARN
 - [ ] 12. Update `TranscriptionSucceeded` state from `End: true` to `Next: ChunkTranscript` in `infra/environments/dev/main.tf`
-- [ ] 13. Add `ChunkTranscript`, `ChunkingSucceeded`, `ChunkingFailed` states to Step Functions definition in `infra/environments/dev/main.tf`
+- [ ] 13. Add `ChunkTranscript` (with `speaker.$` and `title.$` in Parameters), `ChunkingSucceeded`, `ChunkingFailed` states to Step Functions definition in `infra/environments/dev/main.tf`
 - [ ] 14. Add `module.chunk_transcript.function_arn` to `sfn_lambda_invoke` policy Resource list in `infra/environments/dev/main.tf`
 - [ ] 15. Add new outputs (`chunk_transcript_function_name`, `embedding_queue_url`, `embedding_queue_arn`) to `infra/environments/dev/outputs.tf`
 - [ ] 16. Run `terraform init && terraform apply` in `infra/environments/dev/`
@@ -569,7 +583,8 @@ If a transcript already exists from Stage 2 testing, skip to Step 3. Otherwise:
 
 ```bash
 aws s3 cp ../../../samples/hello-my_name_is_wes.mp3 \
-  s3://$(terraform output -raw media_bucket_name)/uploads/hello-my_name_is_wes.mp3
+  s3://$(terraform output -raw media_bucket_name)/uploads/hello-my_name_is_wes.mp3 \
+  --metadata '{"speaker":"Wesley Reisz","title":"Hello, my name is Wes"}'
 ```
 
 ### Step 3: Monitor Step Functions execution
@@ -681,13 +696,14 @@ Expected: A number greater than 0, matching the `chunk_count` from the Step Func
 | Step Functions has chunking states | State machine includes `ChunkTranscript`, `ChunkingSucceeded`, `ChunkingFailed` |
 | Transcription flows into chunking | `TranscriptionSucceeded` transitions to `ChunkTranscript` (not End) |
 | Chunks stored in S3 | `s3://<bucket>/chunks/<video-id>/` contains `chunk-NNN.json` files |
-| Chunk JSON is valid | Each chunk file has `chunk_id`, `video_id`, `sequence`, `text`, `word_count`, `start_time`, `end_time`, `metadata` |
+| Chunk JSON is valid | Each chunk file has `chunk_id`, `video_id`, `sequence`, `text`, `word_count`, `start_time`, `end_time`, `metadata` (including `speaker`, `title`, `source_s3_key`, `total_chunks`) |
 | Chunk text is non-empty | Every chunk has a non-empty `text` field |
 | Timestamps are valid | `start_time < end_time` for every chunk; timestamps increase across chunk sequence |
 | Chunk count is reasonable | For a short audio file (~30s), expect 1 chunk; for a 50-min video, expect ~50-100 chunks |
 | Execution output has chunk_keys | `$.chunking.detail.chunk_keys` is a non-empty array of S3 keys |
 | chunk_keys match S3 files | Every key in `chunk_keys` exists as an object in S3 |
 | SQS messages published | `$.chunking.detail.messages_published` equals `$.chunking.detail.chunk_count` |
+| SQS messages include speaker/title | SQS message body JSON contains `speaker` and `title` fields (values or `null`) |
 | SQS queue has messages | `aws sqs get-queue-attributes --attribute-names ApproximateNumberOfMessages` returns > 0 after execution |
 | Error handling works | `ChunkingFailed` state catches Lambda errors |
 | Original event preserved | Execution output still contains `$.detail.bucket.name` and `$.transcription.detail` |

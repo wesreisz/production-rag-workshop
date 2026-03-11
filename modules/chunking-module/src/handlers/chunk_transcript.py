@@ -19,13 +19,15 @@ def handler(event: dict, context) -> dict:
         transcript_s3_key = detail["transcript_s3_key"]
         video_id = detail["video_id"]
         source_key = detail["source_key"]
+        speaker = detail.get("speaker")
+        title = detail.get("title")
 
         transcript = service.read_transcript(bucket_name, transcript_s3_key)
         timed_words = service.parse_timed_words(transcript)
-        chunks = service.chunk(timed_words, video_id, source_key)
+        chunks = service.chunk(timed_words, video_id, source_key, speaker, title)
         chunk_keys = service.store_chunks(bucket_name, video_id, chunks)
         messages_published = service.publish_chunks(
-            EMBEDDING_QUEUE_URL, chunk_keys, bucket_name, video_id
+            EMBEDDING_QUEUE_URL, chunk_keys, bucket_name, video_id, speaker, title
         )
 
         return {

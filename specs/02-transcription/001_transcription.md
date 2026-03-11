@@ -211,17 +211,22 @@ modules/transcribe-module/
     "bucket_name": "production-rag-media-123456789012",
     "source_key": "uploads/hello-my_name_is_wes.mp3",
     "video_id": "hello-my_name_is_wes",
+    "speaker": "Jane Doe",
+    "title": "Building RAG Systems",
     "status": "IN_PROGRESS"
   }
 }
 ```
 
+The `speaker` and `title` fields are read from S3 object user metadata (`x-amz-meta-speaker`, `x-amz-meta-title`) via `head_object`. If the uploader did not set metadata, both default to `null`.
+
 **Handler responsibilities:**
 
 1. Extract `detail.bucket.name` and `detail.object.key` from event
-2. Call `TranscribeService.derive_video_id(key)` to get the video ID
-3. Call `TranscribeService.start_job(bucket, key, video_id)` to start the Transcribe job
-4. Return standardized response with job name, output key, and status
+2. Call `TranscribeService.get_object_metadata(bucket, key)` to read `speaker` and `title` from S3 object user metadata
+3. Call `TranscribeService.derive_video_id(key)` to get the video ID
+4. Call `TranscribeService.start_job(bucket, key, video_id)` to start the Transcribe job
+5. Return standardized response with job name, output key, `speaker`, `title`, and status
 
 ---
 
@@ -236,7 +241,9 @@ modules/transcribe-module/
     "transcript_s3_key": "transcripts/hello-my_name_is_wes/raw.json",
     "bucket_name": "production-rag-media-123456789012",
     "source_key": "uploads/hello-my_name_is_wes.mp3",
-    "video_id": "hello-my_name_is_wes"
+    "video_id": "hello-my_name_is_wes",
+    "speaker": "Jane Doe",
+    "title": "Building RAG Systems"
   }
 }
 ```
@@ -252,6 +259,8 @@ modules/transcribe-module/
     "bucket_name": "production-rag-media-123456789012",
     "source_key": "uploads/hello-my_name_is_wes.mp3",
     "video_id": "hello-my_name_is_wes",
+    "speaker": "Jane Doe",
+    "title": "Building RAG Systems",
     "status": "COMPLETED"
   }
 }
@@ -261,7 +270,7 @@ modules/transcribe-module/
 
 1. Extract `detail.transcription_job_name` from event
 2. Call `TranscribeService.check_job(job_name)` to get current status
-3. Propagate all fields from input, updating only the `status` field
+3. Propagate all fields from input (including `speaker` and `title`) via `**detail` spread, updating only the `status` field
 4. Return standardized response
 
 **Status values:** `IN_PROGRESS`, `COMPLETED`, `FAILED`
@@ -276,8 +285,17 @@ Business logic layer. All AWS API calls live here.
 |--------|-------|--------|-------------|
 | `derive_video_id(s3_key)` | `"uploads/sample.mp4"` | `"sample"` | Strip `uploads/` prefix and file extension |
 | `detect_media_format(s3_key)` | `"uploads/sample.mp4"` | `"mp4"` | Extract format from file extension |
+| `get_object_metadata(bucket, key)` | bucket, S3 key | dict with `speaker`, `title` (both nullable) | Read S3 object user metadata via `head_object` |
 | `start_job(bucket, key, video_id)` | bucket, S3 key, video_id | dict with job_name, transcript_key, status | Start AWS Transcribe job |
 | `check_job(job_name)` | job name | dict with status | Get job status from Transcribe API |
+
+**`get_object_metadata` details:**
+
+1. Call `self._s3.head_object(Bucket=bucket, Key=key)`
+2. Read `response.get("Metadata", {})` (S3 lowercases user metadata keys)
+3. Return `{"speaker": metadata.get("speaker"), "title": metadata.get("title")}`
+
+The `TranscribeService.__init__` must create an S3 client (`self._s3 = boto3.client("s3")`) in addition to the existing Transcribe client.
 
 **Transcribe API call parameters for `start_job`:**
 
@@ -499,11 +517,13 @@ States:
 
 **State data flow:**
 
-The original S3 EventBridge event is preserved at `$` (root). Transcription results are stored at `$.transcription`. This means downstream stages (chunking, embedding) will have access to both:
+The original S3 EventBridge event is preserved at `$` (root). Transcription results are stored at `$.transcription`. This means downstream stages (chunking, embedding) will have access to:
 - `$.detail.bucket.name` — original S3 bucket
 - `$.detail.object.key` — original uploaded file key
 - `$.transcription.detail.transcript_s3_key` — path to raw transcript
 - `$.transcription.detail.video_id` — derived video ID
+- `$.transcription.detail.speaker` — speaker name (from S3 object user metadata, nullable)
+- `$.transcription.detail.title` — video title (from S3 object user metadata, nullable)
 
 ---
 
@@ -536,8 +556,8 @@ Add Lambda invoke permissions to the existing `sfn_execution` role policy.
 - [ ] 2. Create `modules/transcribe-module/dev-requirements.txt` with `pytest`, `moto[transcribe,s3]`
 - [ ] 3. Create all `__init__.py` files (`src/`, `src/handlers/`, `src/services/`, `src/utils/`, `tests/`, `tests/unit/`)
 - [ ] 4. Create `modules/transcribe-module/src/utils/logger.py` with structured logger
-- [ ] 5. Create `modules/transcribe-module/src/services/transcribe_service.py` with `derive_video_id`, `detect_media_format`, `start_job`, `check_job`
-- [ ] 6. Create `modules/transcribe-module/src/handlers/start_transcription.py` handler
+- [ ] 5. Create `modules/transcribe-module/src/services/transcribe_service.py` with `derive_video_id`, `detect_media_format`, `get_object_metadata`, `start_job`, `check_job`
+- [ ] 6. Create `modules/transcribe-module/src/handlers/start_transcription.py` handler (must call `get_object_metadata` and include `speaker`/`title` in response)
 - [ ] 7. Create `modules/transcribe-module/src/handlers/check_transcription.py` handler
 - [ ] 8. Create `modules/transcribe-module/tests/conftest.py` with shared fixtures
 - [ ] 9. Create `modules/transcribe-module/tests/unit/test_transcribe_service.py` with unit tests
@@ -569,7 +589,8 @@ terraform apply
 
 ```bash
 aws s3 cp ../../../samples/hello-my_name_is_wes.mp3 \
-  s3://$(terraform output -raw media_bucket_name)/uploads/hello-my_name_is_wes.mp3
+  s3://$(terraform output -raw media_bucket_name)/uploads/hello-my_name_is_wes.mp3 \
+  --metadata '{"speaker":"Wesley Reisz","title":"Hello, my name is Wes"}'
 ```
 
 ### Step 3: Monitor Step Functions execution
@@ -663,5 +684,6 @@ Expected: At least 1 (likely 2-4 iterations for a short audio file).
 | Transcript stored in S3 | `s3://<bucket>/transcripts/<video-id>/raw.json` exists and contains valid JSON |
 | Transcript contains text | `results.transcripts[0].transcript` is a non-empty string |
 | Transcript has word-level timing | `results.items` array contains pronunciation entries with `start_time` and `end_time` |
+| Speaker/title propagated | `$.transcription.detail.speaker` and `$.transcription.detail.title` are present in execution state (values from S3 object metadata, or `null` if not set) |
 | Error handling works | TranscriptionFailed state catches invalid input or Transcribe failures |
 | Original event preserved | Execution output still contains `$.detail.bucket.name` and `$.detail.object.key` |

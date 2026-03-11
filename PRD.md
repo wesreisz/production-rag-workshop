@@ -420,6 +420,15 @@ S3 sends events directly to EventBridge via native S3 notifications (enabled per
 }
 ```
 
+**Note:** The S3 EventBridge event does **not** contain user-supplied metadata such as `speaker` or `title`. These values are stored as S3 object user metadata (`x-amz-meta-speaker`, `x-amz-meta-title`) at upload time and read by the transcription handler via `head_object`. Upload example:
+
+```bash
+aws s3 cp sample.mp3 s3://bucket/uploads/sample.mp3 \
+  --metadata '{"speaker":"Jane Doe","title":"Building RAG Systems"}'
+```
+
+If metadata is omitted at upload time, `speaker` and `title` default to `null` throughout the pipeline.
+
 Inter-service events within Step Functions follow this canonical format:
 
 ```json
@@ -452,6 +461,8 @@ Inter-service events within Step Functions follow this canonical format:
 }
 ```
 
+The `speaker` and `title` fields in the canonical metadata originate from S3 object user metadata set at upload time. They are read by the transcription handler and propagated through Step Functions state to all downstream stages (chunking, embedding).
+
 ### 6.4 Lambda Response Format
 
 All Lambda functions return this structure for Step Functions compatibility:
@@ -478,7 +489,7 @@ All Lambda functions return this structure for Step Functions compatibility:
 
 ### 7.1 Transcribe Module
 
-**Purpose:** Accept an S3 video/audio file reference, start an AWS Transcribe job, wait for completion, and store the raw transcript in S3.
+**Purpose:** Accept an S3 video/audio file reference, read user-supplied metadata (`speaker`, `title`) from the S3 object, start an AWS Transcribe job, wait for completion, and store the raw transcript in S3.
 
 **Input (from Step Functions):**
 ```json
@@ -489,11 +500,6 @@ All Lambda functions return this structure for Step Functions compatibility:
     },
     "object": {
       "key": "uploads/sample.mp4"
-    },
-    "metadata": {
-      "video_id": "video-123",
-      "speaker": "Jane Doe",
-      "title": "Building RAG Systems"
     }
   }
 }
@@ -502,14 +508,15 @@ All Lambda functions return this structure for Step Functions compatibility:
 **Processing Steps:**
 
 1. Extract S3 bucket and key from the incoming event
-2. Generate a unique transcription job name from the video ID
-3. Call `transcribe:StartTranscriptionJob` with:
+2. Read S3 object user metadata via `head_object` to extract `speaker` and `title` (both nullable — default to `null` if not set at upload time)
+3. Generate a unique transcription job name from the video ID
+4. Call `transcribe:StartTranscriptionJob` with:
    - Media format detection from file extension
    - Output bucket set to a designated transcripts prefix
    - Language code: `en-US` (configurable)
-4. Return the job name and output location to Step Functions
-5. Step Functions uses a Wait + Poll loop (or callback) to check job status
-6. On completion, the raw transcript JSON is already in S3
+5. Return the job name, output location, `speaker`, and `title` to Step Functions
+6. Step Functions uses a Wait + Poll loop (or callback) to check job status
+7. On completion, the raw transcript JSON is already in S3
 
 **Output (to Step Functions):**
 ```json
@@ -518,10 +525,17 @@ All Lambda functions return this structure for Step Functions compatibility:
   "detail": {
     "transcription_job_name": "video-123-transcribe",
     "transcript_s3_key": "transcripts/video-123/raw.json",
-    "metadata": { "...propagated..." }
+    "bucket_name": "production-rag-media-xxx",
+    "source_key": "uploads/sample.mp4",
+    "video_id": "video-123",
+    "speaker": "Jane Doe",
+    "title": "Building RAG Systems",
+    "status": "IN_PROGRESS"
   }
 }
 ```
+
+The `speaker` and `title` fields are read from S3 object user metadata (`x-amz-meta-speaker`, `x-amz-meta-title`). If the uploader did not set metadata, both fields are `null`. The `check_transcription` handler propagates all fields via `**detail` spread, so `speaker` and `title` persist through the wait/poll loop and are available to downstream stages.
 
 **Error Handling:**
 
@@ -539,19 +553,21 @@ All Lambda functions return this structure for Step Functions compatibility:
 
 **Purpose:** Take a raw transcript from S3, split it into retrieval-friendly chunks with metadata, and publish them to SQS for fan-out processing.
 
-**Input (from Step Functions):**
+**Input (from Step Functions via Parameters mapping):**
 ```json
 {
   "detail": {
+    "bucket_name": "production-rag-media-xxx",
     "transcript_s3_key": "transcripts/video-123/raw.json",
-    "metadata": {
-      "video_id": "video-123",
-      "speaker": "Jane Doe",
-      "title": "Building RAG Systems"
-    }
+    "video_id": "video-123",
+    "source_key": "uploads/sample.mp4",
+    "speaker": "Jane Doe",
+    "title": "Building RAG Systems"
   }
 }
 ```
+
+The `speaker` and `title` fields are propagated from the transcription handler output (which reads them from S3 object user metadata). Both are nullable.
 
 **Processing Steps:**
 
@@ -564,9 +580,9 @@ All Lambda functions return this structure for Step Functions compatibility:
 4. For each chunk, generate:
    - Unique chunk ID: `{video_id}-chunk-{sequence_number}`
    - Start/end timestamps (from transcript word-level timing)
-   - Full metadata propagation (speaker, title, video_id)
+   - Full metadata propagation (speaker, title, video_id, source_s3_key)
 5. Store chunks as individual JSON files in S3: `chunks/{video_id}/chunk-{N}.json`
-6. Publish chunk references to SQS for embedding fan-out
+6. Publish chunk references to SQS for embedding fan-out (each SQS message includes `speaker` and `title` for downstream use)
 
 **Chunk Schema:**
 ```json
@@ -575,14 +591,26 @@ All Lambda functions return this structure for Step Functions compatibility:
   "video_id": "video-123",
   "sequence": 1,
   "text": "The key to building production RAG systems is...",
-  "token_count": 487,
+  "word_count": 487,
   "start_time": 0.0,
   "end_time": 45.2,
   "metadata": {
     "speaker": "Jane Doe",
     "title": "Building RAG Systems",
-    "source_s3_key": "uploads/sample.mp4"
+    "source_s3_key": "uploads/sample.mp4",
+    "total_chunks": 24
   }
+}
+```
+
+**SQS Message Body (per chunk, for embedding fan-out):**
+```json
+{
+  "chunk_s3_key": "chunks/video-123/chunk-001.json",
+  "bucket": "production-rag-media-xxx",
+  "video_id": "video-123",
+  "speaker": "Jane Doe",
+  "title": "Building RAG Systems"
 }
 ```
 
@@ -597,7 +625,9 @@ All Lambda functions return this structure for Step Functions compatibility:
       "chunks/video-123/chunk-001.json",
       "chunks/video-123/chunk-002.json"
     ],
-    "metadata": { "...propagated..." }
+    "messages_published": 24,
+    "video_id": "video-123",
+    "bucket_name": "production-rag-media-xxx"
   }
 }
 ```

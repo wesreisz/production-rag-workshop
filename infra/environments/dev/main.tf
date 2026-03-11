@@ -323,6 +323,8 @@ resource "aws_sfn_state_machine" "pipeline" {
               "transcript_s3_key.$" = "$.transcription.detail.transcript_s3_key"
               "video_id.$"          = "$.transcription.detail.video_id"
               "source_key.$"        = "$.transcription.detail.source_key"
+              "speaker.$"           = "$.transcription.detail.speaker"
+              "title.$"             = "$.transcription.detail.title"
             }
           }
         }

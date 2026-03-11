@@ -69,6 +69,8 @@ class ChunkingService:
         timed_words: list[dict],
         video_id: str,
         source_key: str,
+        speaker: str | None = None,
+        title: str | None = None,
     ) -> list[dict]:
         sentences = self.build_sentences(timed_words)
         if not sentences:
@@ -87,7 +89,8 @@ class ChunkingService:
             ):
                 chunks.append(
                     self._build_chunk_dict(
-                        current_sentences, sequence, video_id, source_key
+                        current_sentences, sequence, video_id, source_key,
+                        speaker, title,
                     )
                 )
                 sequence += 1
@@ -105,7 +108,8 @@ class ChunkingService:
         if current_sentences:
             chunks.append(
                 self._build_chunk_dict(
-                    current_sentences, sequence, video_id, source_key
+                    current_sentences, sequence, video_id, source_key,
+                    speaker, title,
                 )
             )
 
@@ -132,6 +136,8 @@ class ChunkingService:
         sequence: int,
         video_id: str,
         source_key: str,
+        speaker: str | None = None,
+        title: str | None = None,
     ) -> dict:
         return {
             "chunk_id": f"{video_id}-chunk-{sequence:03d}",
@@ -144,6 +150,8 @@ class ChunkingService:
             "metadata": {
                 "source_s3_key": source_key,
                 "total_chunks": 0,
+                "speaker": speaker,
+                "title": title,
             },
         }
 
@@ -173,7 +181,13 @@ class ChunkingService:
         return keys
 
     def publish_chunks(
-        self, queue_url: str, chunk_keys: list[str], bucket: str, video_id: str
+        self,
+        queue_url: str,
+        chunk_keys: list[str],
+        bucket: str,
+        video_id: str,
+        speaker: str | None = None,
+        title: str | None = None,
     ) -> int:
         for key in chunk_keys:
             self._sqs.send_message(
@@ -182,6 +196,8 @@ class ChunkingService:
                     "chunk_s3_key": key,
                     "bucket": bucket,
                     "video_id": video_id,
+                    "speaker": speaker,
+                    "title": title,
                 }),
             )
 

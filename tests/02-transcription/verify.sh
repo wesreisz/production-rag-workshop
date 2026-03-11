@@ -21,7 +21,8 @@ UPLOAD_NAME="test-hello-${RUN_NUM}.mp3"
 VIDEO_ID="test-hello-${RUN_NUM}"
 
 echo "=== 1. Upload sample audio (run ${RUN_NUM}) ==="
-aws s3 cp "$SAMPLES_DIR/hello-my_name_is_wes.mp3" "s3://${BUCKET}/uploads/${UPLOAD_NAME}"
+aws s3 cp "$SAMPLES_DIR/hello-my_name_is_wes.mp3" "s3://${BUCKET}/uploads/${UPLOAD_NAME}" \
+  --metadata '{"speaker":"Wesley Reisz","title":"Hello, my name is Wes"}'
 echo "Uploaded to s3://${BUCKET}/uploads/${UPLOAD_NAME}"
 
 echo ""

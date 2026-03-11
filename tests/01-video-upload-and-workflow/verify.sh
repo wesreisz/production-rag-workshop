@@ -9,7 +9,8 @@ STATE_MACHINE=$(terraform -chdir="$TF_DIR" output -raw state_machine_arn)
 SAMPLE_FILE="$(cd "$(dirname "$0")/../../samples" && pwd)/hello-my_name_is_wes.mp3"
 
 echo "=== 1. Upload sample audio ==="
-aws s3 cp "$SAMPLE_FILE" "s3://${BUCKET}/uploads/hello-my_name_is_wes.mp3"
+aws s3 cp "$SAMPLE_FILE" "s3://${BUCKET}/uploads/hello-my_name_is_wes.mp3" \
+  --metadata '{"speaker":"Wesley Reisz","title":"Hello, my name is Wes"}'
 echo "Uploaded to s3://${BUCKET}/uploads/hello-my_name_is_wes.mp3"
 
 echo ""

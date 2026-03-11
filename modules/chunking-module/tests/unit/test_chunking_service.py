@@ -107,7 +107,10 @@ class TestChunk:
         words = service.parse_timed_words(sample_transcript)
 
         # Act
-        chunks = service.chunk(words, "test-video", "uploads/test.mp3")
+        chunks = service.chunk(
+            words, "test-video", "uploads/test.mp3",
+            speaker="Jane Doe", title="Building RAG",
+        )
 
         # Assert
         assert len(chunks) == 1
@@ -118,6 +121,8 @@ class TestChunk:
         assert chunks[0]["start_time"] == 0.0
         assert chunks[0]["metadata"]["source_s3_key"] == "uploads/test.mp3"
         assert chunks[0]["metadata"]["total_chunks"] == 1
+        assert chunks[0]["metadata"]["speaker"] == "Jane Doe"
+        assert chunks[0]["metadata"]["title"] == "Building RAG"
 
     def test_long_transcript(self, long_transcript):
         # Arrange
@@ -155,7 +160,10 @@ class TestChunk:
         words = service.parse_timed_words(sample_transcript)
 
         # Act
-        chunks = service.chunk(words, "meta-video", "uploads/meta.mp3")
+        chunks = service.chunk(
+            words, "meta-video", "uploads/meta.mp3",
+            speaker="Wes", title="Meta Talk",
+        )
 
         # Assert
         chunk = chunks[0]
@@ -167,6 +175,8 @@ class TestChunk:
         assert chunk["start_time"] < chunk["end_time"]
         assert chunk["metadata"]["source_s3_key"] == "uploads/meta.mp3"
         assert chunk["metadata"]["total_chunks"] == 1
+        assert chunk["metadata"]["speaker"] == "Wes"
+        assert chunk["metadata"]["title"] == "Meta Talk"
 
 
 class TestStoreChunks:
@@ -220,7 +230,10 @@ class TestPublishChunks:
         ]
 
         # Act
-        service.publish_chunks(queue_url, chunk_keys, "test-bucket", "test-video")
+        service.publish_chunks(
+            queue_url, chunk_keys, "test-bucket", "test-video",
+            speaker="Jane Doe", title="Building RAG",
+        )
 
         # Assert
         messages = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10)
@@ -229,6 +242,8 @@ class TestPublishChunks:
         assert bodies[0]["chunk_s3_key"] == "chunks/v/chunk-001.json"
         assert bodies[0]["bucket"] == "test-bucket"
         assert bodies[0]["video_id"] == "test-video"
+        assert bodies[0]["speaker"] == "Jane Doe"
+        assert bodies[0]["title"] == "Building RAG"
         assert bodies[1]["chunk_s3_key"] == "chunks/v/chunk-002.json"
 
     @mock_aws
@@ -245,7 +260,10 @@ class TestPublishChunks:
         ]
 
         # Act
-        result = service.publish_chunks(queue_url, chunk_keys, "test-bucket", "test-video")
+        result = service.publish_chunks(
+            queue_url, chunk_keys, "test-bucket", "test-video",
+            speaker="Wes", title="RAG Talk",
+        )
 
         # Assert
         assert result == 3
