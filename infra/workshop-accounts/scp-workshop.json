@@ -13,6 +13,8 @@
         "sqs:*",
         "bedrock:*",
         "rds:*",
+        "rds-data:*",
+        "dbqms:*",
         "ec2:Describe*",
         "ec2:CreateVpc",
         "ec2:DeleteVpc",

@@ -66,7 +66,7 @@ The embedding Lambda is triggered by SQS via an event source mapping. AWS delive
     {
       "messageId": "a1b2c3d4-5678-90ab-cdef-111111111111",
       "receiptHandle": "...",
-      "body": "{\"chunk_s3_key\": \"chunks/hello-my_name_is_wes/chunk-001.json\", \"bucket\": \"production-rag-media-123456789012\", \"video_id\": \"hello-my_name_is_wes\"}",
+      "body": "{\"chunk_s3_key\": \"chunks/hello-my_name_is_wes/chunk-001.json\", \"bucket\": \"production-rag-media-123456789012\", \"video_id\": \"hello-my_name_is_wes\", \"speaker\": \"Jane Doe\", \"title\": \"Building RAG Systems\"}",
       "attributes": { "..." },
       "messageAttributes": {},
       "md5OfBody": "...",
@@ -85,6 +85,8 @@ The `body` field is a JSON string published by the chunking Lambda's `publish_ch
 | `chunk_s3_key` | `string` | S3 key of the chunk JSON file (e.g. `chunks/hello-my_name_is_wes/chunk-001.json`) |
 | `bucket` | `string` | S3 bucket name |
 | `video_id` | `string` | Video identifier |
+| `speaker` | `string` (nullable) | Speaker name (from S3 object user metadata, propagated through pipeline) |
+| `title` | `string` (nullable) | Video title (from S3 object user metadata, propagated through pipeline) |
 
 ---
 
@@ -102,13 +104,15 @@ The chunk JSON file read from S3 has this structure (created by the chunking sta
   "start_time": 0.0,
   "end_time": 45.2,
   "metadata": {
+    "speaker": "Jane Doe",
+    "title": "Building RAG Systems",
     "source_s3_key": "uploads/hello-my_name_is_wes.mp3",
     "total_chunks": 3
   }
 }
 ```
 
-The embedding service uses `text` for embedding generation and all fields for the pgvector upsert.
+The embedding service uses `text` for embedding generation and all fields for the pgvector upsert. The `speaker` and `title` are also available in the SQS message body (for cases where the embedding service needs them without reading the full chunk JSON).
 
 ---
 
@@ -172,14 +176,16 @@ The embedding service inserts the chunk and its embedding into the `video_chunks
 ```sql
 INSERT INTO video_chunks (
     chunk_id, video_id, sequence, text, embedding,
-    start_time, end_time, source_s3_key, created_at
+    speaker, title, start_time, end_time, source_s3_key, created_at
 ) VALUES (
     %s, %s, %s, %s, %s::vector,
-    %s, %s, %s, NOW()
+    %s, %s, %s, %s, %s, NOW()
 )
 ON CONFLICT (chunk_id) DO UPDATE SET
     text = EXCLUDED.text,
     embedding = EXCLUDED.embedding,
+    speaker = EXCLUDED.speaker,
+    title = EXCLUDED.title,
     updated_at = NOW();
 ```
 
@@ -190,9 +196,11 @@ Parameters (positional):
 3. `sequence` (int)
 4. `text` (string)
 5. `embedding` (string — the vector as a string like `[0.01, -0.02, ...]`)
-6. `start_time` (float)
-7. `end_time` (float)
-8. `source_s3_key` (string — from `metadata.source_s3_key`)
+6. `speaker` (string, nullable — from `chunk["metadata"]["speaker"]`)
+7. `title` (string, nullable — from `chunk["metadata"]["title"]`)
+8. `start_time` (float)
+9. `end_time` (float)
+10. `source_s3_key` (string — from `chunk["metadata"]["source_s3_key"]`)
 
 ---
 
@@ -255,7 +263,7 @@ modules/embedding-module/
 5. Call `EmbeddingService.store_embedding(chunk, embedding)` to upsert into pgvector
 6. Log success with `chunk_id` and `video_id`
 
-**Error handling:** If any record fails, the exception propagates and the SQS message returns to the queue (visibility timeout). After 3 failures, the message moves to the DLQ.
+**Error handling:** The embedding handler intentionally does **not** catch exceptions or return `statusCode` responses. Unlike the transcribe and chunking handlers (which are invoked by Step Functions and communicate results via return values), this handler is invoked by an SQS event source mapping. SQS event source mappings determine success or failure based on whether the Lambda invocation succeeds or throws — not on the return value. If any record fails, the unhandled exception causes the Lambda invocation to fail, and the SQS message returns to the queue after the visibility timeout expires. After 3 consecutive failures (`maxReceiveCount = 3`), the message moves to the DLQ.
 
 **Environment variables used:**
 
@@ -308,9 +316,10 @@ Business logic layer. All S3 I/O, Bedrock calls, and database operations live he
 1. Get connection via `self.get_db_connection()`
 2. Create cursor
 3. Convert embedding list to string format: `"[0.01, -0.02, ...]"`
-4. Execute the upsert SQL with parameters from the chunk dict
-5. Commit the transaction
-6. Close cursor (not connection — connection is cached)
+4. Extract `speaker` and `title` from `chunk["metadata"]` (both nullable)
+5. Execute the upsert SQL with parameters from the chunk dict (including `speaker`, `title`)
+6. Commit the transaction
+7. Close cursor (not connection — connection is cached)
 
 ---
 
@@ -381,7 +390,6 @@ Add one Lambda module call to `infra/environments/dev/main.tf` using the `infra/
 
 | Variable | Value |
 |----------|-------|
-| `MEDIA_BUCKET` | `module.media_bucket.bucket_name` |
 | `SECRET_ARN` | `module.aurora_vectordb.secret_arn` |
 | `DB_NAME` | `module.aurora_vectordb.db_name` |
 | `EMBEDDING_DIMENSIONS` | `"256"` |
@@ -486,7 +494,8 @@ If the queue is empty, upload a new sample audio file to trigger the full pipeli
 ```bash
 BUCKET=$(terraform output -raw media_bucket_name)
 aws s3 cp ../../../samples/hello-my_name_is_wes.mp3 \
-  "s3://${BUCKET}/uploads/test-embed-$(date +%s).mp3"
+  "s3://${BUCKET}/uploads/test-embed-$(date +%s).mp3" \
+  --metadata '{"speaker":"Wesley Reisz","title":"Hello, my name is Wes"}'
 ```
 
 ### Step 3: Monitor the embedding Lambda
@@ -601,5 +610,6 @@ Expected: The first row has `similarity = 1.0` (identical vector), other rows ha
 | Embedding dimensions are 256 | All stored vectors have 256 dimensions |
 | Upsert is idempotent | Re-processing the same chunk updates rather than duplicates the row |
 | Chunk data is complete | Each `video_chunks` row has non-null `chunk_id`, `video_id`, `text`, `embedding`, `start_time`, `end_time` |
+| Speaker/title stored | `speaker` and `title` columns are populated when S3 object metadata was set at upload time |
 | Similarity search works | `ORDER BY embedding <=> query_vector` returns results ordered by relevance |
 | Unit tests pass | `cd modules/embedding-module && python -m pytest tests/` passes |
