@@ -66,3 +66,8 @@ output "cloudshell_security_group_id" {
   value       = module.networking.cloudshell_security_group_id
 }
 
+output "embedding_function_name" {
+  description = "Embedding Lambda function name"
+  value       = module.embed_chunk.function_name
+}
+

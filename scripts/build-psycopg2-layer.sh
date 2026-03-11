@@ -11,6 +11,7 @@ mkdir -p "$LAYER_DIR"
 
 echo "1. Installing psycopg2-binary and creating zip inside Docker..."
 docker run --rm \
+  --platform linux/amd64 \
   --entrypoint "" \
   -v "$LAYER_DIR:/output" \
   public.ecr.aws/lambda/python:3.11 \

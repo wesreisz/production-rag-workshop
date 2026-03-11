@@ -334,6 +334,24 @@ psycopg2-binary
 
 `psycopg2-binary` is listed for local development and testing. In the Lambda runtime, the psycopg2 Lambda layer provides the actual binary. The `requirements.txt` is not used for Lambda packaging (the module source directory is zipped directly by Terraform's `archive_file`).
 
+**Lambda packaging note:** The `archive_file` data source in both `infra/modules/lambda/main.tf` and `infra/modules/lambda-vpc/main.tf` must exclude non-runtime files from the deployment zip. Add `excludes` to the `archive_file` data source in both modules:
+
+```
+data "archive_file" "lambda" {
+  type        = "zip"
+  source_dir  = var.source_dir
+  output_path = "/tmp/${var.function_name}.zip"
+  excludes    = [
+    ".venv",
+    ".pytest_cache",
+    "tests",
+    "dev-requirements.txt",
+  ]
+}
+```
+
+Without these excludes, a `.venv` created inside a module directory for local development will push the deployment package past Lambda's 70 MB limit.
+
 **`dev-requirements.txt`:**
 
 ```

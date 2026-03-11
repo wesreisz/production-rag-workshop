@@ -7,6 +7,11 @@ data "aws_subnets" "default" {
     name   = "vpc-id"
     values = [data.aws_vpc.default.id]
   }
+
+  filter {
+    name   = "default-for-az"
+    values = ["true"]
+  }
 }
 
 data "aws_route_tables" "default" {
@@ -17,6 +22,14 @@ resource "aws_security_group" "lambda" {
   name        = "${var.project_name}-lambda-sg"
   description = "Security group for Lambda functions"
   vpc_id      = data.aws_vpc.default.id
+
+  ingress {
+    description = "HTTPS from self for VPC interface endpoints"
+    from_port   = 443
+    to_port     = 443
+    protocol    = "tcp"
+    self        = true
+  }
 
   egress {
     from_port   = 0

@@ -228,7 +228,7 @@ infra/modules/aurora-vectordb/
 | Resource | Type | Key Settings |
 |----------|------|-------------|
 | `aws_db_subnet_group.aurora` | Subnet group | `name` = `${var.project_name}-aurora`, `subnet_ids` = `var.subnet_ids` |
-| `aws_rds_cluster.this` | Aurora cluster | `cluster_identifier` = `${var.project_name}-vectordb`, `engine` = `aurora-postgresql`, `engine_version` = `17.7`, `database_name` = `var.db_name`, `master_username` = `var.master_username`, `master_password` = `var.master_password`, `db_subnet_group_name` = subnet group, `vpc_security_group_ids` = `[var.security_group_id]`, `skip_final_snapshot` = `true`, `apply_immediately` = `true` |
+| `aws_rds_cluster.this` | Aurora cluster | `cluster_identifier` = `${var.project_name}-vectordb`, `engine` = `aurora-postgresql`, `engine_version` = `17.7`, `database_name` = `var.db_name`, `master_username` = `var.master_username`, `master_password` = `var.master_password`, `db_subnet_group_name` = subnet group, `vpc_security_group_ids` = `[var.security_group_id]`, `skip_final_snapshot` = `true`, `apply_immediately` = `true`, `enable_http_endpoint` = `true` |
 | `aws_rds_cluster.this` | Serverless v2 scaling | `serverless_v2_scaling_configuration { min_capacity = 0.5, max_capacity = 4 }` |
 | `aws_rds_cluster_instance.this` | Cluster instance | `cluster_identifier` = cluster, `instance_class` = `db.serverless`, `engine` = `aurora-postgresql` |
 | `aws_secretsmanager_secret.db` | Secret | `name` = `${var.project_name}-aurora-credentials` |
@@ -399,6 +399,34 @@ Database schema is managed via **Alembic** migrations rather than ad-hoc SQL scr
 
 - Future schema changes (e.g. `videos` metadata table in Stage 5) are added as new migration files — running migrations applies only pending changes
 - The `pgvector` Python package provides SQLAlchemy/Alembic integration for the `vector` column type
+
+---
+
+### Part E-2: Automated Schema Migration via Lambda
+
+The manual CloudShell workflow for running Alembic migrations (Part E, Verification Steps 2–4) requires participants to create a VPC environment, install psql, and run commands by hand. This is error-prone in a workshop setting.
+
+To eliminate this friction, a **migration Lambda** runs the schema SQL automatically during `terraform apply`:
+
+**Directory structure:**
+
+```
+modules/migration-module/
+├── src/
+│   ├── __init__.py
+│   └── handlers/
+│       ├── __init__.py
+│       └── run_migrations.py
+```
+
+**How it works:**
+
+1. A `module "run_migrations"` deploys a VPC-attached Lambda (same networking, psycopg2 layer, and Secrets Manager access as the embedding Lambda)
+2. The handler reads `SECRET_ARN` and `DB_NAME` from environment variables, connects to Aurora, and executes the same schema SQL from Part E — but with `IF NOT EXISTS` guards on every statement for idempotency
+3. A `null_resource "run_migrations"` with a `local-exec` provisioner invokes the Lambda via `aws lambda invoke` after both the Lambda and Aurora are deployed
+4. The `null_resource` uses `triggers = { migration_hash = filesha256(...) }` on the handler file, so it re-runs only when the migration SQL changes
+
+This means `terraform apply` deploys Aurora **and** initializes the schema in a single step. The Alembic project in `migrations/` and the `scripts/run-migrations.sh` wrapper remain available for ad-hoc use and future schema evolution, but are no longer required for initial setup.
 
 ---
 

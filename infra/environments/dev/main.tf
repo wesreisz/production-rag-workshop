@@ -149,6 +149,113 @@ resource "aws_sqs_queue" "embedding" {
   })
 }
 
+module "embed_chunk" {
+  source = "../../modules/lambda-vpc"
+
+  function_name = "${var.project_name}-embed-chunk"
+  handler       = "src.handlers.process_embedding.handler"
+  timeout       = 120
+  source_dir    = "${path.module}/../../../modules/embedding-module"
+  tags          = local.common_tags
+
+  subnet_ids         = module.networking.subnet_ids
+  security_group_ids = [module.networking.lambda_security_group_id]
+  layers             = [aws_lambda_layer_version.psycopg2.arn]
+
+  environment_variables = {
+    SECRET_ARN           = module.aurora_vectordb.secret_arn
+    DB_NAME              = module.aurora_vectordb.db_name
+    EMBEDDING_DIMENSIONS = "256"
+  }
+
+  policy_statements = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${module.media_bucket.bucket_arn}/chunks/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeModel"]
+        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = module.aurora_vectordb.secret_arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = aws_sqs_queue.embedding.arn
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_event_source_mapping" "embedding" {
+  event_source_arn = aws_sqs_queue.embedding.arn
+  function_name    = module.embed_chunk.function_arn
+  batch_size       = 1
+  enabled          = true
+}
+
+module "run_migrations" {
+  source = "../../modules/lambda-vpc"
+
+  function_name = "${var.project_name}-run-migrations"
+  handler       = "src.handlers.run_migrations.handler"
+  timeout       = 30
+  source_dir    = "${path.module}/../../../modules/migration-module"
+  tags          = local.common_tags
+
+  subnet_ids         = module.networking.subnet_ids
+  security_group_ids = [module.networking.lambda_security_group_id]
+  layers             = [aws_lambda_layer_version.psycopg2.arn]
+
+  environment_variables = {
+    SECRET_ARN = module.aurora_vectordb.secret_arn
+    DB_NAME    = module.aurora_vectordb.db_name
+  }
+
+  policy_statements = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = module.aurora_vectordb.secret_arn
+      }
+    ]
+  })
+}
+
+resource "null_resource" "run_migrations" {
+  depends_on = [module.run_migrations, module.aurora_vectordb]
+
+  triggers = {
+    migration_hash = filesha256("${path.module}/../../../modules/migration-module/src/handlers/run_migrations.py")
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws lambda invoke \
+        --function-name ${module.run_migrations.function_name} \
+        --payload '{}' \
+        --region ${var.aws_region} \
+        /tmp/migration-result.json && \
+      cat /tmp/migration-result.json && \
+      python3 -c "import json,sys; r=json.load(open('/tmp/migration-result.json')); sys.exit(1) if r.get('errorMessage') else sys.exit(0)"
+    EOT
+  }
+}
+
 resource "aws_cloudwatch_log_group" "pipeline" {
   name              = "/aws/stepfunctions/${var.project_name}-pipeline"
   retention_in_days = 14
