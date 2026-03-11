@@ -71,3 +71,14 @@ output "embedding_function_name" {
   value       = module.embed_chunk.function_name
 }
 
+output "embed_text_endpoint_url" {
+  description = "Public URL for generating embeddings"
+  value       = aws_lambda_function_url.embed_text.function_url
+}
+
+output "embed_text_api_key" {
+  description = "API key for the embed-text endpoint"
+  value       = random_password.embed_text_api_key.result
+  sensitive   = true
+}
+
