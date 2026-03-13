@@ -23,12 +23,12 @@ output "chunk_transcript_function_name" {
 
 output "embedding_queue_url" {
   description = "Embedding fan-out queue URL"
-  value       = aws_sqs_queue.embedding.url
+  value       = module.embedding_queue.queue_url
 }
 
 output "embedding_queue_arn" {
   description = "Embedding fan-out queue ARN"
-  value       = aws_sqs_queue.embedding.arn
+  value       = module.embedding_queue.queue_arn
 }
 
 output "aurora_cluster_endpoint" {

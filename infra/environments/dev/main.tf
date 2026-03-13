@@ -85,7 +85,7 @@ module "chunk_transcript" {
 
   environment_variables = {
     MEDIA_BUCKET        = module.media_bucket.bucket_name
-    EMBEDDING_QUEUE_URL = aws_sqs_queue.embedding.url
+    EMBEDDING_QUEUE_URL = module.embedding_queue.queue_url
   }
 
   policy_statements = jsonencode({
@@ -104,7 +104,7 @@ module "chunk_transcript" {
       {
         Effect   = "Allow"
         Action   = ["sqs:SendMessage"]
-        Resource = aws_sqs_queue.embedding.arn
+        Resource = module.embedding_queue.queue_arn
       }
     ]
   })
@@ -133,20 +133,10 @@ resource "aws_lambda_layer_version" "psycopg2" {
   source_code_hash    = filebase64sha256("${path.module}/../../../layers/psycopg2/psycopg2-layer.zip")
 }
 
-resource "aws_sqs_queue" "embedding_dlq" {
-  name                      = "${var.project_name}-embedding-dlq"
-  message_retention_seconds = 86400
-}
-
-resource "aws_sqs_queue" "embedding" {
-  name                       = "${var.project_name}-embedding-queue"
-  visibility_timeout_seconds = 300
-  message_retention_seconds  = 86400
-
-  redrive_policy = jsonencode({
-    deadLetterTargetArn = aws_sqs_queue.embedding_dlq.arn
-    maxReceiveCount     = 3
-  })
+module "embedding_queue" {
+  source     = "../../modules/sqs"
+  queue_name = "${var.project_name}-embedding-queue"
+  tags       = local.common_tags
 }
 
 module "embed_chunk" {
@@ -193,14 +183,14 @@ module "embed_chunk" {
           "sqs:DeleteMessage",
           "sqs:GetQueueAttributes"
         ]
-        Resource = aws_sqs_queue.embedding.arn
+        Resource = module.embedding_queue.queue_arn
       }
     ]
   })
 }
 
 resource "aws_lambda_event_source_mapping" "embedding" {
-  event_source_arn = aws_sqs_queue.embedding.arn
+  event_source_arn = module.embedding_queue.queue_arn
   function_name    = module.embed_chunk.function_arn
   batch_size       = 1
   enabled          = true
