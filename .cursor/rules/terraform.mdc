@@ -98,6 +98,20 @@ locals {
 - Use `lifecycle.create_before_destroy` for zero-downtime updates on networking resources.
 - Use `lifecycle.prevent_destroy` on stateful resources (Aurora, S3 buckets with data).
 
+## Module Interface Conventions
+
+- Primary resource named `this` (e.g., `aws_lambda_function.this`, `aws_sqs_queue.this`, `aws_s3_bucket.this`).
+- All modules accept `tags` variable: `type = map(string)`, `default = {}`.
+- Infrastructure modules accept `project_name` for resource naming.
+- Lambda IAM: caller defines `policy_statements` as `jsonencode({...})`, module attaches it. Module handles execution role and basic/VPC policies.
+
+## Environment Composition (dev/main.tf)
+
+- All modules receive `tags = local.common_tags`.
+- Cross-module references via outputs: `module.media_bucket.bucket_arn`, `module.networking.subnet_ids`.
+- Glue resources (event_source_mapping, function_url, lambda_permission) stay inline in `main.tf` — they are environment-specific wiring, not reusable modules.
+- State machine definition lives in `main.tf` (via `jsonencode` with module references); the step-functions module handles IAM, logging, and EventBridge trigger.
+
 ## Region Lock
 
 All resources deploy to `us-east-1`. Set the provider once in the root module; do not override per-resource.

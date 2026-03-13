@@ -1,12 +1,61 @@
 ---
-description: "Module naming conventions for the production-rag pipeline"
+description: "Architecture conventions for the production-rag pipeline"
 globs: "modules/**"
 alwaysApply: true
 ---
 
-# Module Naming Convention
+# Module Naming
 
-- `*-module` → AWS Lambda triggered by internal events (S3, SQS, Step Functions). Lives in VPC or standard Lambda. Examples: `transcribe-module`, `chunking-module`, `embedding-module`, `migration-module`.
+- `*-module` → AWS Lambda triggered by internal events (S3, SQS, Step Functions). Examples: `transcribe-module`, `chunking-module`, `embedding-module`, `migration-module`.
 - `*-endpoint` → HTTP-facing service exposed via API Gateway or Lambda Function URL. Examples: `embedding-endpoint`, `question-endpoint`.
 
-When creating a new module, pick the suffix based on trigger type, not function. If it serves HTTP requests, it's an endpoint. If it reacts to AWS events, it's a module.
+Pick suffix by trigger type, not function. HTTP requests = endpoint. AWS events = module.
+
+# Module Directory Layout
+
+```
+modules/<name>-module/
+├── src/
+│   ├── handlers/            # One file per Lambda entry point (thin)
+│   ├── services/            # One service class with all business logic
+│   └── utils/
+│       └── logger.py        # get_logger(name) → logging.Logger at INFO
+├── tests/
+│   ├── conftest.py          # aws_credentials, mock_aws_services fixtures
+│   └── unit/
+│       └── test_<service>.py
+├── requirements.txt         # Runtime deps only (boto3, psycopg2-binary)
+└── dev-requirements.txt     # pytest, moto[<services>]
+```
+
+# Handler → Service Contract
+
+- Handlers parse the event, call service methods, return response. Zero business logic in handlers.
+- Service class instantiated at module level (outside handler) for connection reuse across warm invocations.
+- Logger via `from src.utils.logger import get_logger`; log with `extra={"request_id": request_id}`.
+
+# Response Formats
+
+- **Step Functions handlers**: `{"statusCode": 200, "detail": {...}}`
+- **HTTP endpoint handlers**: `{"statusCode": N, "headers": {CORS}, "body": json.dumps({...})}`
+- **SQS handlers**: process `event["Records"]` in a loop. Do NOT catch exceptions — let SQS retry/DLQ handle failures.
+- **Error responses**: `ValueError` → 400; unhandled `Exception` → 500 with `{"error": "internal error"}`.
+
+# Event Shape by Trigger
+
+- **EventBridge/S3**: `event["detail"]["bucket"]["name"]`, `event["detail"]["object"]["key"]`
+- **Step Functions**: `event["detail"][field]` (fields set by ResultSelector/Parameters in state machine)
+- **SQS**: `json.loads(event["Records"][N]["body"])`
+- **API Gateway / Function URL**: `event["headers"]`, `json.loads(event["body"])`
+
+# S3 Key Conventions
+
+| Prefix | Content | Example |
+|--------|---------|---------|
+| `uploads/` | Raw media input | `uploads/my-video.mp4` |
+| `transcripts/` | Transcribe output | `transcripts/{video_id}/raw.json` |
+| `chunks/` | Chunked text | `chunks/{video_id}/chunk-001.json` |
+
+# Video ID Derivation
+
+Strip the S3 prefix and file extension: `uploads/my-video.mp4` → `my-video`

@@ -1,0 +1,54 @@
+---
+description: "Spec file and verification script format for workshop stages"
+globs: "specs/**/*.md,tests/**/*.sh"
+alwaysApply: false
+---
+
+# Separation of Concerns
+
+The PRD and specs define **what** to build — requirements, contracts, schemas, deliverables. The RIPER /plan phase defines **how** to build it — implementation sequence, file-level changes, technical decisions. Specs should never prescribe implementation details like function internals or algorithm choices; those belong in planning.
+
+# Spec File Structure
+
+Every spec follows this section order:
+
+1. **Title + Deliverable** — one sentence describing the outcome
+2. **Overview** — numbered list of main steps
+3. **Prerequisites** — checkboxes referencing prior stages
+4. **Architecture Context** — ASCII pipeline diagram, mark current stage with `<<< THIS STAGE`
+5. **Resources** — Parts A, B, C… each with tables (File | Purpose, Variable | Type | Description)
+6. **Implementation Checklist** — numbered checkboxes, one per atomic task
+7. **Verification** — step-by-step commands to prove it works
+8. **Success Criteria** — table: Criterion | How to verify
+
+# Verify Script Pattern
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+TF_DIR="$PROJECT_ROOT/infra/environments/dev"
+
+# Read Terraform outputs
+BUCKET=$(terraform -chdir="$TF_DIR" output -raw media_bucket_name)
+
+# Unique run name to avoid collisions
+RUN_NUM=$(date +%s | tail -c 5)
+TEST_FILE="test-<stage>-${RUN_NUM}"
+
+echo "=== 1. Description ==="
+# ... verify step ...
+
+echo "PASS — description"
+# or: echo "FAIL — description" && exit 1
+```
+
+Key conventions:
+- `set -euo pipefail` always
+- Resolve paths relative to script location
+- Terraform outputs via `terraform -chdir`
+- Unique upload names per run
+- Poll Step Functions at 15s intervals, 300s max
+- Exit 1 on any failure
