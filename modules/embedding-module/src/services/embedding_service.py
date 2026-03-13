@@ -75,21 +75,26 @@ class EmbeddingService:
     def store_embedding(self, chunk: dict, embedding: list[float]) -> None:
         conn = self.get_db_connection()
         cursor = conn.cursor()
-        embedding_str = "[" + ", ".join(str(v) for v in embedding) + "]"
-        cursor.execute(
-            UPSERT_SQL,
-            (
-                chunk["chunk_id"],
-                chunk["video_id"],
-                chunk["sequence"],
-                chunk["text"],
-                embedding_str,
-                chunk["metadata"].get("speaker"),
-                chunk["metadata"].get("title"),
-                chunk["start_time"],
-                chunk["end_time"],
-                chunk["metadata"]["source_s3_key"],
-            ),
-        )
-        conn.commit()
-        cursor.close()
+        try:
+            embedding_str = "[" + ", ".join(str(v) for v in embedding) + "]"
+            cursor.execute(
+                UPSERT_SQL,
+                (
+                    chunk["chunk_id"],
+                    chunk["video_id"],
+                    chunk["sequence"],
+                    chunk["text"],
+                    embedding_str,
+                    chunk["metadata"].get("speaker"),
+                    chunk["metadata"].get("title"),
+                    chunk["start_time"],
+                    chunk["end_time"],
+                    chunk["metadata"]["source_s3_key"],
+                ),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            cursor.close()
