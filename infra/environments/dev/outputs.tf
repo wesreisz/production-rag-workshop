@@ -31,6 +31,11 @@ output "embedding_queue_arn" {
   value       = module.embedding_queue.queue_arn
 }
 
+output "embedding_dlq_url" {
+  description = "Embedding dead-letter queue URL"
+  value       = module.embedding_queue.dlq_url
+}
+
 output "aurora_cluster_endpoint" {
   description = "Aurora writer endpoint"
   value       = module.aurora_vectordb.cluster_endpoint

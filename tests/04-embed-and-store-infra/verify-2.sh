@@ -172,7 +172,7 @@ fi
 
 echo ""
 echo "=== 10. Verify DLQ is empty ==="
-DLQ_URL=$(aws sqs get-queue-url --queue-name production-rag-embedding-dlq --query 'QueueUrl' --output text 2>/dev/null || echo "")
+DLQ_URL=$(terraform -chdir="$TF_DIR" output -raw embedding_dlq_url 2>/dev/null || echo "")
 if [ -n "$DLQ_URL" ]; then
   DLQ_COUNT=$(aws sqs get-queue-attributes \
     --queue-url "$DLQ_URL" \
@@ -184,11 +184,13 @@ if [ -n "$DLQ_URL" ]; then
     fail "DLQ has $DLQ_COUNT message(s)"
   fi
 else
-  fail "DLQ not found"
+  fail "DLQ output not found — run 'terraform apply' to add embedding_dlq_url output"
 fi
 
 echo ""
 echo "=== 11. Verify embeddings in pgvector ==="
+SECRET_ARN=$(terraform -chdir="$TF_DIR" output -raw aurora_secret_arn 2>/dev/null || echo "unknown")
+DB_NAME=$(terraform -chdir="$TF_DIR" output -raw aurora_db_name 2>/dev/null || echo "unknown")
 echo ""
 echo "  Use the RDS Query Editor to verify:"
 echo ""
@@ -221,11 +223,25 @@ echo "=== 12. Embedding Lambda logs ==="
 echo "  Check CloudWatch logs:"
 echo "  aws logs tail /aws/lambda/$FUNC_NAME --since 10m"
 
+EMBED_URL=$(terraform -chdir="$TF_DIR" output -raw embed_text_endpoint_url 2>/dev/null || echo "")
+EMBED_KEY=$(terraform -chdir="$TF_DIR" output -raw embed_text_api_key 2>/dev/null || echo "")
+
 echo ""
 echo "========================================="
 echo "  Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 echo "  (pgvector checks available via RDS Query Editor)"
 echo "========================================="
+
+if [ -n "$EMBED_URL" ] && [ -n "$EMBED_KEY" ]; then
+  echo ""
+  echo "You can curl the embedding endpoint directly with:"
+  echo ""
+  echo "  curl -s \"$EMBED_URL\" \\"
+  echo "    -H \"Content-Type: application/json\" \\"
+  echo "    -H \"x-api-key: $EMBED_KEY\" \\"
+  echo "    -d '{\"text\": \"Hello, my name is Wes\"}' | jq"
+  echo ""
+fi
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
   exit 1
