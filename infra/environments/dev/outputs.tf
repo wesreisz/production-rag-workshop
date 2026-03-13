@@ -3,7 +3,7 @@ output "media_bucket_name" {
 }
 
 output "state_machine_arn" {
-  value = aws_sfn_state_machine.pipeline.arn
+  value = module.pipeline.state_machine_arn
 }
 
 output "start_transcription_function_name" {
