@@ -225,7 +225,7 @@ production-rag/
 │   ├── transcribe-module/    # S3 video ──▶ AWS Transcribe ──▶ transcript JSON
 │   ├── chunking-module/      # Transcript ──▶ overlapping text chunks
 │   ├── embedding-module/     # Chunks ──▶ Bedrock Titan V2 ──▶ Aurora pgvector
-│   ├── question-module/      # Question ──▶ embed ──▶ vector search ──▶ answer
+│   ├── question-endpoint/    # Question ──▶ embed ──▶ vector search ──▶ answer
 │   └── mcp-server/           # MCP server wrapping the question API
 ├── samples/                  # Sample audio/video files
 ├── specs/prompts/            # Spec-driven development prompts per stage

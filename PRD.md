@@ -346,7 +346,7 @@ production-rag/
 │   │   ├── tests/
 │   │   ├── requirements.txt
 │   │   └── dev-requirements.txt
-│   ├── question-module/
+│   ├── question-endpoint/
 │   │   ├── specs/features/
 │   │   ├── openapi/                    # OpenAPI spec for REST API
 │   │   ├── src/
@@ -697,7 +697,7 @@ The `speaker` and `title` fields are propagated from the transcription handler o
 
 ---
 
-### 7.4 Question Module (Retrieval Service)
+### 7.4 Question Endpoint (Retrieval Service)
 
 **Purpose:** Accept a natural language question, embed it, perform vector similarity search against pgvector, and return the most relevant chunks. Optionally, pass the chunks to an LLM for answer synthesis.
 
@@ -821,7 +821,7 @@ Cursor IDE ──(stdio)──▶ MCP Server (local Python process) ──(HTTPS
 
 **Dependencies:** `mcp[cli]`, `httpx`, `pydantic`
 
-**No Terraform Resources:** Runs locally. Only needs the API Gateway URL from the question module deployment.
+**No Terraform Resources:** Runs locally. Only needs the API Gateway URL from the question endpoint deployment.
 
 ---
 
@@ -918,7 +918,7 @@ CREATE TABLE videos (
 
 ### 8.2 Networking
 
-- Lambda functions for embedding and question modules must be VPC-attached to access Aurora
+- Lambda functions for embedding and question endpoints must be VPC-attached to access Aurora
 - VPC endpoints for S3, Bedrock, and Secrets Manager to allow Lambda-in-VPC to reach AWS services without NAT Gateway
 - Security group: Allow PostgreSQL port (5432) inbound from Lambda security group and CloudShell security group
 - CloudShell VPC environment: A private subnet with NAT gateway enables CloudShell to access Aurora directly for psql, migrations, and ad-hoc queries. Students create the VPC environment manually in the AWS Console using Terraform-output subnet and security group IDs
@@ -1076,7 +1076,7 @@ Each workshop stage follows the RIPER-5 protocol. The instructor guides particip
 | RESEARCH | Study the question flow: embed query → vector search → (optional) LLM synthesis; review API Gateway setup | 10 min |
 | INNOVATE | Discuss: RAG vs pure retrieval; re-ranking strategies; filter design; response format | 10 min |
 | PLAN | Define API contract (OpenAPI spec), question handler, retrieval service, Bedrock LLM integration, API Gateway Terraform | 10 min |
-| EXECUTE | Implement question module: handler, retrieval service, API endpoint; deploy API Gateway + Lambda; test with curl/Postman | 35 min |
+| EXECUTE | Implement question endpoint: handler, retrieval service, API endpoint; deploy API Gateway + Lambda; test with curl/Postman | 35 min |
 | REVIEW | Send sample questions via API; verify relevant chunks are returned; test with different queries and filters | 10 min |
 
 **Deliverable:** A REST API at `POST /ask` accepts natural language questions and returns relevant video transcript chunks with similarity scores.

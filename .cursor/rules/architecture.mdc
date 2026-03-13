@@ -1,0 +1,12 @@
+---
+description: "Module naming conventions for the production-rag pipeline"
+globs: "modules/**"
+alwaysApply: true
+---
+
+# Module Naming Convention
+
+- `*-module` → AWS Lambda triggered by internal events (S3, SQS, Step Functions). Lives in VPC or standard Lambda. Examples: `transcribe-module`, `chunking-module`, `embedding-module`, `migration-module`.
+- `*-endpoint` → HTTP-facing service exposed via API Gateway or Lambda Function URL. Examples: `embedding-endpoint`, `question-endpoint`.
+
+When creating a new module, pick the suffix based on trigger type, not function. If it serves HTTP requests, it's an endpoint. If it reacts to AWS events, it's a module.
