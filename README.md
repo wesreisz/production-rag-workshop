@@ -8,16 +8,54 @@ An 8-hour hands-on workshop where participants build an end-to-end video ingesti
 ## Architecture
 
 ```
-Video Upload ──▶ S3 ──▶ EventBridge ──▶ Step Functions
-                                            │
-                                            ├── Transcribe (AWS Transcribe)
-                                            ├── Chunk (Lambda)
-                                            ├── Embed (Bedrock Titan V2 ──▶ Aurora pgvector)
-                                            └── Done
-                                                    │
-                        Question API (API Gateway) ◀┘
-                              │
-                        MCP Server (Cursor IDE)
+                            ┌─────────────────────────────────────────────────────────────┐
+                            │                    Step Functions                            │
+                            │                                                             │
+ ┌──────────┐  ┌──────────┐ │  ┌──────────┐    ┌───────────┐    ┌───────────┐             │
+ │  Video   │  │  Event-  │ │  │ Start    │    │ Wait 30s  │    │ Check     │             │
+ │  Upload  ├─▶│  Bridge  ├─┤  │ Transcr. ├───▶│    +      ├───▶│ Transcr.  │──┐          │
+ └──────────┘  └──────────┘ │  └──────────┘    │  Poll     │    │ Status    │  │          │
+      │                     │       │          └───────────┘    └───────────┘  │          │
+      ▼                     │       ▼                                │         │          │
+ ┌──────────┐               │  ┌──────────┐                  COMPLETED?       │          │
+ │    S3    │               │  │    S3    │                   ├─ No ───────────┘          │
+ │ uploads/ │               │  │transcr./ │                   │                           │
+ └──────────┘               │  └──────────┘                   ▼ Yes                      │
+                            │                          ┌───────────┐    ┌──────────┐      │
+                            │                          │   Chunk    ├───▶│    S3    │      │
+                            │                          │ Transcript │    │ chunks/  │      │
+                            │                          └─────┬─────┘    └──────────┘      │
+                            │                                │                            │
+                            └────────────────────────────────┼────────────────────────────┘
+                                                             │
+                                                             ▼
+                                                        ┌─────────┐
+                                                        │   SQS   │
+                                                        │  Queue  │
+                                                        └────┬────┘
+                                                             │ 1 msg per chunk
+                                                             ▼
+                                                       ┌───────────┐     ┌──────────────┐
+                                                       │ Embedding │     │   Bedrock     │
+                                                       │  Lambda   ├────▶│   Titan V2    │
+                                                       │  (VPC)    │     │  embed(text)  │
+                                                       └─────┬─────┘     └──────────────┘
+                                                             │
+                                                             ▼
+                                                       ┌───────────┐
+                                                       │  Aurora    │
+                                                       │ pgvector  │
+                                                       │ (VPC)     │
+                                                       └─────┬─────┘
+                                                             │
+                          ┌──────────────────────────────────┘
+                          │ planned (stages 6-7)
+                          ▼
+                   ┌──────────────┐     ┌──────────────┐
+                   │  Question    │     │  MCP Server  │
+                   │  Endpoint    ├────▶│  (local)     │
+                   │ (API Gateway)│     │  Cursor IDE  │
+                   └──────────────┘     └──────────────┘
 ```
 
 ## Technology Stack
@@ -212,40 +250,64 @@ Estimated cost per student for the full workshop (10 videos at 50 min each, 3-da
 
 ---
 
-## Project Structure (Target)
+## Project Structure
 
 ```
 production-rag/
 ├── infra/
 │   ├── workshop-accounts/    # Student account provisioning (documented above)
-│   ├── bootstrap/            # Terraform remote state setup
+│   ├── bootstrap/            # Terraform remote state setup (S3 + DynamoDB)
 │   ├── environments/dev/     # Dev environment Terraform
 │   └── modules/              # Reusable Terraform modules
+│       ├── s3/               #   Media bucket with EventBridge notifications
+│       ├── lambda/           #   Generic Lambda (transcribe, chunking)
+│       ├── lambda-vpc/       #   VPC-attached Lambda (embedding, migration)
+│       ├── aurora-vectordb/  #   Aurora Serverless v2 + pgvector + Secrets Manager
+│       ├── step-functions/   #   State machine + EventBridge rule
+│       ├── sqs/              #   Embedding queue + DLQ
+│       └── networking/       #   Default VPC, security groups, VPC endpoints
 ├── modules/
 │   ├── transcribe-module/    # S3 video ──▶ AWS Transcribe ──▶ transcript JSON
-│   ├── chunking-module/      # Transcript ──▶ overlapping text chunks
-│   ├── embedding-module/     # Chunks ──▶ Bedrock Titan V2 ──▶ Aurora pgvector
-│   ├── question-endpoint/    # Question ──▶ embed ──▶ vector search ──▶ answer
-│   └── mcp-server/           # MCP server wrapping the question API
+│   ├── chunking-module/      # Transcript ──▶ overlapping text chunks ──▶ SQS
+│   ├── embedding-module/     # SQS ──▶ Bedrock Titan V2 ──▶ Aurora pgvector
+│   ├── embedding-endpoint/   # HTTP endpoint to embed arbitrary text (Lambda Function URL)
+│   └── migration-module/     # Alembic migrations for Aurora pgvector schema
+├── layers/                   # Lambda layers (psycopg2)
+├── scripts/                  # Build scripts (psycopg2 layer, migration packaging)
 ├── samples/                  # Sample audio/video files
-├── specs/prompts/            # Spec-driven development prompts per stage
+├── specs/                    # Spec-driven development specs per stage
+│   ├── 01-video-upload-and-workflow/
+│   ├── 02-transcription/
+│   ├── 03-chunking-and-fanout/
+│   └── 04-embed-and-store/
+├── tests/                    # Integration/verification scripts per stage
 ├── PRD.md                    # Full Product Requirements Document
 └── README.md                 # This file
 ```
 
-Each module follows the same internal structure:
+### Planned (not yet implemented)
+
+These modules are described in the [PRD](PRD.md) and will be built during workshop stages 6-7:
+
+- `modules/question-endpoint/` -- Question ➜ embed ➜ vector search ➜ answer (API Gateway)
+- `modules/mcp-server/` -- MCP server wrapping the question API for Cursor IDE
+- `infra/modules/api-gateway/` -- REST API Terraform module for the question service
+
+### Module layout
+
+Each pipeline module follows this internal structure:
 
 ```
 <name>-module/
 ├── src/
-│   ├── handlers/     # Lambda entry points (thin)
-│   ├── services/     # Business logic
-│   ├── models/       # Data structures
-│   └── utils/        # Helpers
+│   ├── handlers/          # Lambda entry points (thin)
+│   ├── services/          # Business logic
+│   └── utils/             # Helpers (logger)
 ├── tests/
-├── specs/features/   # Behavioral specifications
-├── requirements.txt
-└── dev-requirements.txt
+│   ├── conftest.py        # Shared fixtures (aws_credentials, mock services)
+│   └── unit/
+├── requirements.txt       # Runtime dependencies
+└── dev-requirements.txt   # Test dependencies (pytest, moto)
 ```
 
 ## Documentation
@@ -255,5 +317,5 @@ Each module follows the same internal structure:
 ## Reference
 
 This workshop is adapted from [wesreisz/video-pipeline](https://github.com/wesreisz/video-pipeline) with two key changes:
-- **Embeddings:** OpenAI &#8594; Amazon Bedrock Titan Text Embeddings V2
-- **Vector DB:** Pinecone &#8594; Aurora Serverless v2 + pgvector
+- **Embeddings:** OpenAI ➜ Amazon Bedrock Titan Text Embeddings V2
+- **Vector DB:** Pinecone ➜ Aurora Serverless v2 + pgvector
