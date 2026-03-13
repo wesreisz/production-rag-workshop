@@ -109,7 +109,7 @@ fi
 
 echo ""
 echo "=== 6. Migration files ==="
-MIGRATION_FILE="$(cd "$(dirname "$0")/../.." && pwd)/migrations/versions/001_initial_schema.py"
+MIGRATION_FILE="$(cd "$(dirname "$0")/../.." && pwd)/modules/migration-module/migrations/versions/001_initial_schema.py"
 if [ -f "$MIGRATION_FILE" ]; then
   pass "001_initial_schema.py exists"
 else

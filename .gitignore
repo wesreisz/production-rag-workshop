@@ -23,8 +23,17 @@ venv/
 # macOS
 .DS_Store
 
-# Lambda layers (build artifacts)
+# Lambda layers and module build artifacts
 layers/
+modules/migration-module/alembic/
+modules/migration-module/bin/
+modules/migration-module/greenlet/
+modules/migration-module/include/
+modules/migration-module/mako/
+modules/migration-module/markupsafe/
+modules/migration-module/sqlalchemy/
+modules/migration-module/typing_extensions.py
+modules/migration-module/*.dist-info/
 
 # Large binary samples
 samples/*.mp4

@@ -15,7 +15,7 @@ read -rp "Press Enter to continue or Ctrl+C to exit... "
 BUCKET=$(terraform -chdir="$TF_DIR" output -raw media_bucket_name)
 STATE_MACHINE=$(terraform -chdir="$TF_DIR" output -raw state_machine_arn)
 
-EXISTING=$(aws s3 ls "s3://${BUCKET}/uploads/test-hello-" --recursive 2>/dev/null | wc -l | tr -d ' ')
+EXISTING=$(aws s3 ls "s3://${BUCKET}/uploads/test-hello-" --recursive 2>/dev/null | wc -l | tr -d ' ') || true
 RUN_NUM=$(printf "%03d" $((EXISTING + 1)))
 UPLOAD_NAME="test-hello-${RUN_NUM}.mp3"
 VIDEO_ID="test-hello-${RUN_NUM}"
