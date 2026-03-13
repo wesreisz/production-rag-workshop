@@ -7,55 +7,30 @@ An 8-hour hands-on workshop where participants build an end-to-end video ingesti
 
 ## Architecture
 
-```
-                            ┌─────────────────────────────────────────────────────────────┐
-                            │                    Step Functions                            │
-                            │                                                             │
- ┌──────────┐  ┌──────────┐ │  ┌──────────┐    ┌───────────┐    ┌───────────┐             │
- │  Video   │  │  Event-  │ │  │ Start    │    │ Wait 30s  │    │ Check     │             │
- │  Upload  ├─▶│  Bridge  ├─┤  │ Transcr. ├───▶│    +      ├───▶│ Transcr.  │──┐          │
- └──────────┘  └──────────┘ │  └──────────┘    │  Poll     │    │ Status    │  │          │
-      │                     │       │          └───────────┘    └───────────┘  │          │
-      ▼                     │       ▼                                │         │          │
- ┌──────────┐               │  ┌──────────┐                  COMPLETED?       │          │
- │    S3    │               │  │    S3    │                   ├─ No ───────────┘          │
- │ uploads/ │               │  │transcr./ │                   │                           │
- └──────────┘               │  └──────────┘                   ▼ Yes                      │
-                            │                          ┌───────────┐    ┌──────────┐      │
-                            │                          │   Chunk    ├───▶│    S3    │      │
-                            │                          │ Transcript │    │ chunks/  │      │
-                            │                          └─────┬─────┘    └──────────┘      │
-                            │                                │                            │
-                            └────────────────────────────────┼────────────────────────────┘
-                                                             │
-                                                             ▼
-                                                        ┌─────────┐
-                                                        │   SQS   │
-                                                        │  Queue  │
-                                                        └────┬────┘
-                                                             │ 1 msg per chunk
-                                                             ▼
-                                                       ┌───────────┐     ┌──────────────┐
-                                                       │ Embedding │     │   Bedrock     │
-                                                       │  Lambda   ├────▶│   Titan V2    │
-                                                       │  (VPC)    │     │  embed(text)  │
-                                                       └─────┬─────┘     └──────────────┘
-                                                             │
-                                                             ▼
-                                                       ┌───────────┐
-                                                       │  Aurora    │
-                                                       │ pgvector  │
-                                                       │ (VPC)     │
-                                                       └─────┬─────┘
-                                                             │
-                          ┌──────────────────────────────────┘
-                          │ planned (stages 6-7)
-                          ▼
-                   ┌──────────────┐     ┌──────────────┐
-                   │  Question    │     │  MCP Server  │
-                   │  Endpoint    ├────▶│  (local)     │
-                   │ (API Gateway)│     │  Cursor IDE  │
-                   └──────────────┘     └──────────────┘
+```mermaid
+graph TD
+    Upload["Video Upload"] -->|"s3://bucket/uploads/"| S3["S3 Bucket"]
+    S3 --> EB["EventBridge"]
+
+    EB --> SF
+
+    subgraph SF ["Step Functions"]
+        Validate["Validate Input"] --> StartT["Start Transcription<br/><i>Lambda</i>"]
+        StartT -->|"transcript → S3"| Wait["Wait 30s"]
+        Wait --> CheckT["Check Transcription<br/><i>Lambda</i>"]
+        CheckT --> Decision{COMPLETED?}
+        Decision -->|No| Wait
+        Decision -->|Yes| Chunk["Chunk Transcript<br/><i>Lambda</i>"]
+        Chunk -->|"chunks → S3"| Done["Done"]
+    end
+
+    Chunk -->|"1 msg per chunk"| SQS["SQS Queue"]
+    SQS --> Embed["Embedding Lambda<br/><i>VPC</i>"]
+    Embed --> Bedrock["Bedrock<br/>Titan V2"]
+    Embed --> Aurora[("Aurora pgvector<br/><i>VPC</i>")]
+
+    Aurora -.->|"planned · stages 6-7"| Question["Question Endpoint<br/><i>API Gateway</i>"]
+    Question -.-> MCP["MCP Server<br/><i>Cursor IDE</i>"]
 ```
 
 ## Technology Stack
