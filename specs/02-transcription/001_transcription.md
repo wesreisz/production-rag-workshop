@@ -72,7 +72,7 @@ Downstream Lambda handlers extract `detail.bucket.name` and `detail.object.key`.
 
 ## Lambda Response Format
 
-All Lambda functions return this structure for Step Functions compatibility (per PRD Section 6.4):
+All Step Functions Lambda handlers return this structure on success:
 
 ```json
 {
@@ -82,6 +82,8 @@ All Lambda functions return this structure for Step Functions compatibility (per
   }
 }
 ```
+
+**Error handling:** Step Functions handlers do **not** catch exceptions or return `statusCode: 400/500` responses. Exceptions propagate as Lambda failures, which Step Functions handles via its `Retry` blocks (for transient service errors) and `Catch` blocks (routing to Fail states). This ensures the state machine's error flow works correctly — returning a 500 in the response body would be treated as a successful invocation by Step Functions.
 
 ---
 

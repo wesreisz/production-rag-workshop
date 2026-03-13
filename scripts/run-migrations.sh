@@ -27,7 +27,7 @@ echo "  User: $DB_USER"
 echo ""
 echo "=== Running Alembic migrations ==="
 
-cd "$PROJECT_ROOT/migrations"
+cd "$PROJECT_ROOT/modules/migration-module/migrations"
 alembic upgrade head
 
 echo ""

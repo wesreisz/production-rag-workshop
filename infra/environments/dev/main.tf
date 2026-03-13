@@ -196,6 +196,17 @@ resource "aws_lambda_event_source_mapping" "embedding" {
   enabled          = true
 }
 
+resource "null_resource" "build_migration_deps" {
+  triggers = {
+    handler_hash  = filesha256("${path.module}/../../../modules/migration-module/src/handlers/run_migrations.py")
+    versions_hash = sha256(join("", [for f in sort(fileset("${path.module}/../../../modules/migration-module/migrations/versions", "*.py")) : filesha256("${path.module}/../../../modules/migration-module/migrations/versions/${f}")]))
+  }
+
+  provisioner "local-exec" {
+    command = "bash ${path.module}/../../../scripts/build-migration-module.sh"
+  }
+}
+
 module "run_migrations" {
   source = "../../modules/lambda-vpc"
 
@@ -224,13 +235,16 @@ module "run_migrations" {
       }
     ]
   })
+
+  depends_on = [null_resource.build_migration_deps]
 }
 
 resource "null_resource" "run_migrations" {
   depends_on = [module.run_migrations, module.aurora_vectordb]
 
   triggers = {
-    migration_hash = filesha256("${path.module}/../../../modules/migration-module/src/handlers/run_migrations.py")
+    handler_hash  = filesha256("${path.module}/../../../modules/migration-module/src/handlers/run_migrations.py")
+    versions_hash = sha256(join("", [for f in sort(fileset("${path.module}/../../../modules/migration-module/migrations/versions", "*.py")) : filesha256("${path.module}/../../../modules/migration-module/migrations/versions/${f}")]))
   }
 
   provisioner "local-exec" {

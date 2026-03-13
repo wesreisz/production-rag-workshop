@@ -357,16 +357,27 @@ psycopg2-layer.zip
 
 ---
 
-### Part E: DB Schema Migrations (Alembic)
+### Part E: DB Schema Migrations (Alembic via Lambda)
 
-Database schema is managed via **Alembic** migrations rather than ad-hoc SQL scripts. This provides version-tracked, repeatable, reversible schema changes — a production best practice.
+Database schema is managed via **Alembic** migrations, providing version-tracked, repeatable, reversible schema changes. A migration Lambda runs `alembic upgrade head` automatically during `terraform apply`, so Alembic is the single source of truth and no manual migration step is needed.
 
-**Requirements:**
+**Directory structure:**
 
-- Initialize an Alembic project in a `migrations/` directory at the project root
-- Database URL must be configurable via environment variable (not hardcoded)
-- Dependencies: `alembic`, `sqlalchemy`, `psycopg2-binary`, `pgvector`
-- Create a wrapper script `scripts/run-migrations.sh` that reads connection details from Terraform outputs and runs migrations
+```
+modules/migration-module/
+├── migrations/
+│   ├── alembic.ini
+│   ├── env.py
+│   ├── script.py.mako
+│   └── versions/
+│       └── 001_initial_schema.py
+├── src/
+│   ├── __init__.py
+│   └── handlers/
+│       ├── __init__.py
+│       └── run_migrations.py
+└── requirements.txt          # alembic, sqlalchemy (bundled into Lambda zip)
+```
 
 **Initial migration (`001`):**
 
@@ -376,38 +387,29 @@ Database schema is managed via **Alembic** migrations rather than ad-hoc SQL scr
 - Create metadata indexes on `video_id` and `speaker`
 - Must include both `upgrade` and `downgrade` functions (reversible)
 
-**Design constraints:**
-
-- Future schema changes (e.g. `videos` metadata table in Stage 5) are added as new migration files — running migrations applies only pending changes
-- The `pgvector` Python package provides SQLAlchemy/Alembic integration for the `vector` column type
-
----
-
-### Part E-2: Automated Schema Migration via Lambda
-
-Running Alembic migrations manually requires direct database access, which is error-prone in a workshop setting.
-
-To eliminate this friction, a **migration Lambda** runs the schema SQL automatically during `terraform apply`:
-
-**Directory structure:**
-
-```
-modules/migration-module/
-├── src/
-│   ├── __init__.py
-│   └── handlers/
-│       ├── __init__.py
-│       └── run_migrations.py
-```
-
 **How it works:**
 
-1. A `module "run_migrations"` deploys a VPC-attached Lambda (same networking, psycopg2 layer, and Secrets Manager access as the embedding Lambda)
-2. The handler reads `SECRET_ARN` and `DB_NAME` from environment variables, connects to Aurora, and executes the same schema SQL from Part E — but with `IF NOT EXISTS` guards on every statement for idempotency
-3. A `null_resource "run_migrations"` with a `local-exec` provisioner invokes the Lambda via `aws lambda invoke` after both the Lambda and Aurora are deployed
-4. The `null_resource` uses `triggers = { migration_hash = filesha256(...) }` on the handler file, so it re-runs only when the migration SQL changes
+1. A `null_resource "build_migration_deps"` runs `scripts/build-migration-module.sh` to pip-install `alembic` and `sqlalchemy` into the module directory (Docker-based, linux/amd64). This runs automatically during `terraform apply`, triggered by migration file hashes.
+2. A `module "run_migrations"` deploys a VPC-attached Lambda (same networking, psycopg2 layer, and Secrets Manager access as the embedding Lambda). The Lambda zip includes the Alembic project and its Python dependencies.
+3. The handler reads `SECRET_ARN` and `DB_NAME` from environment variables, builds a SQLAlchemy engine, and calls `alembic.command.upgrade(config, "head")` programmatically — running all pending Alembic migrations.
+4. A `null_resource "run_migrations"` with a `local-exec` provisioner invokes the Lambda via `aws lambda invoke` after both the Lambda and Aurora are deployed. It triggers when the handler file or any Alembic version file changes.
 
-This means `terraform apply` deploys Aurora **and** initializes the schema in a single step. The Alembic project in `migrations/` and the `scripts/run-migrations.sh` wrapper remain available for ad-hoc use and future schema evolution, but are no longer required for initial setup.
+This means `terraform apply` builds deps, deploys the Lambda, and runs migrations in a single step.
+
+**env.py dual-mode design:**
+
+The `env.py` supports two execution paths:
+- **Lambda path:** Receives a pre-built SQLAlchemy connection via `config.attributes["connection"]` (set by the handler)
+- **Local path:** Falls back to `engine_from_config` using a `DATABASE_URL` environment variable, for use with `scripts/run-migrations.sh`
+
+**Local development script:**
+
+`scripts/run-migrations.sh` reads connection details from Terraform outputs and runs `alembic upgrade head` locally. This is useful for ad-hoc migration work but is not required for deployment.
+
+**Design constraints:**
+
+- Future schema changes are added as new Alembic version files — running migrations applies only pending changes
+- Adding a new version file automatically triggers the Lambda on the next `terraform apply` (the Terraform trigger hashes all `.py` files in `migrations/versions/`)
 
 ---
 
@@ -482,14 +484,19 @@ resource "aws_lambda_layer_version" "psycopg2" {
 - [ ] 14. Add `module "aurora_vectordb"` to `infra/environments/dev/main.tf`
 - [ ] 15. Add `aws_lambda_layer_version.psycopg2` resource to `infra/environments/dev/main.tf`
 - [ ] 16. Add new outputs to `infra/environments/dev/outputs.tf` (`aurora_cluster_endpoint`, `aurora_secret_arn`, `aurora_db_name`, `vpc_id`, `lambda_security_group_id`)
-- [ ] 17. Initialize Alembic project in `migrations/` directory with dependencies and environment-variable-based DB URL
-- [ ] 18. Create initial migration (`001`) for pgvector extension, `video_chunks` table, and indexes (reversible)
-- [ ] 19. Create `scripts/run-migrations.sh` wrapper that reads connection details from Terraform outputs
-- [ ] 20. Run `terraform init && terraform apply` in `infra/environments/dev/`
-- [ ] 21. Install migration dependencies and run migrations against Aurora
-- [ ] 22. Verify: pgvector extension is enabled
-- [ ] 23. Verify: `video_chunks` table and indexes exist
-- [ ] 24. Verify: Alembic version is tracked in the database
+- [ ] 17. Create `modules/migration-module/migrations/` with `alembic.ini`, `env.py` (dual-mode: Lambda connection or `DATABASE_URL` fallback), and `script.py.mako`
+- [ ] 18. Create initial migration (`modules/migration-module/migrations/versions/001_initial_schema.py`) for pgvector extension, `video_chunks` table, and indexes (reversible)
+- [ ] 19. Create `modules/migration-module/src/handlers/run_migrations.py` that calls `alembic.command.upgrade(config, "head")` using SecretsManager credentials
+- [ ] 20. Create `modules/migration-module/requirements.txt` with `alembic` and `sqlalchemy`
+- [ ] 21. Create `scripts/build-migration-module.sh` (Docker-based pip install of alembic + sqlalchemy into the module directory)
+- [ ] 22. Create `scripts/run-migrations.sh` wrapper that reads connection details from Terraform outputs for local use
+- [ ] 23. Add `null_resource "build_migration_deps"` to `infra/environments/dev/main.tf` (auto-runs the build script, triggered by migration file hashes)
+- [ ] 24. Add `module "run_migrations"` with `depends_on = [null_resource.build_migration_deps]` to `infra/environments/dev/main.tf`
+- [ ] 25. Add `null_resource "run_migrations"` to `infra/environments/dev/main.tf` (triggers on handler hash + versions hash)
+- [ ] 26. Run `terraform init && terraform apply` in `infra/environments/dev/`
+- [ ] 27. Verify: pgvector extension is enabled
+- [ ] 28. Verify: `video_chunks` table and indexes exist
+- [ ] 29. Verify: Alembic version is tracked in the database
 
 ---
 
@@ -543,7 +550,7 @@ All queries should return results confirming the pgvector extension, video_chunk
 | Metadata indexes exist | `\di idx_video_chunks_video_id` and `\di idx_video_chunks_speaker` show indexes |
 | Embedding column is vector(256) | `SELECT column_name, udt_name FROM information_schema.columns WHERE table_name = 'video_chunks' AND column_name = 'embedding'` shows `vector` |
 | Migration is reversible | Running the downgrade drops tables and extension; running upgrade again recreates them |
-| Migration files exist | `migrations/versions/001_initial_schema.py` exists with `upgrade` and `downgrade` |
+| Migration files exist | `modules/migration-module/migrations/versions/001_initial_schema.py` exists with `upgrade` and `downgrade` |
 | lambda-vpc module exists | `infra/modules/lambda-vpc/` has main.tf, variables.tf, outputs.tf |
 | psycopg2 layer deployed | `aws lambda list-layer-versions --layer-name production-rag-psycopg2` returns a valid ARN |
 | Terraform plan is clean | `terraform plan` shows no pending changes after apply |

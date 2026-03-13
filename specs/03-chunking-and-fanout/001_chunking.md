@@ -301,7 +301,7 @@ The `speaker` and `title` fields are propagated from the transcription handler (
 6. Call `ChunkingService.publish_chunks(queue_url, chunk_keys, bucket, video_id, speaker, title)` to publish each chunk S3 key as a message to the SQS embedding queue (speaker/title included in each message body)
 7. Return standardized response with chunk keys, count, and messages_published
 
-**Error handling:** Same pattern as transcribe handlers — `ValueError` → 400, unhandled exceptions → 500.
+**Error handling:** Same pattern as transcribe handlers — exceptions propagate as Lambda failures for Step Functions Retry/Catch to handle. Do not catch exceptions or return `statusCode: 400/500` responses.
 
 ---
 
