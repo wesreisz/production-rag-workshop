@@ -276,7 +276,7 @@ The reference codebase uses Step Functions for pipeline orchestration. This is r
 | Chunking | `boto3`, `tiktoken` (or custom tokenizer) |
 | Embedding | `boto3` (Bedrock runtime), `psycopg2-binary`, `pgvector` |
 | Question | `boto3` (Bedrock runtime), `psycopg2-binary`, `pgvector` |
-| MCP Server | `mcp`, `httpx`, `pydantic` |
+| MCP Server | `fastmcp`, `httpx`, `pydantic-settings` |
 | Migrations | `alembic`, `sqlalchemy`, `psycopg2-binary`, `pgvector` |
 
 ---
@@ -774,25 +774,25 @@ POST /ask
 
 **MCP Tools Exposed:**
 
-1. **`ask_video_question`** — Submit a question and receive relevant transcript chunks with optional LLM-synthesized answer
+1. **`ask_video_question`** — Submit a question and receive relevant transcript chunks ranked by similarity
    ```
    Tool: ask_video_question
    Input: { "question": "string", "top_k": "int (optional, default 5)" }
-   Output: { "answer": "string", "sources": [...] }
+   Output: Formatted string with results containing text, similarity, speaker, title, timestamps
    ```
 
 2. **`list_indexed_videos`** — List all videos currently indexed in the system
    ```
    Tool: list_indexed_videos
    Input: {}
-   Output: { "videos": [{"video_id": "string", "title": "string", "speaker": "string", "chunk_count": "int"}] }
+   Output: Formatted string listing video_id, title, speaker, chunk_count per video
    ```
 
 3. **`search_by_speaker`** — Search across all content from a specific speaker
    ```
    Tool: search_by_speaker
-   Input: { "speaker": "string", "question": "string" }
-   Output: { "answer": "string", "sources": [...] }
+   Input: { "speaker": "string", "question": "string", "top_k": "int (optional, default 5)" }
+   Output: Formatted string with speaker-filtered results
    ```
 
 **Architecture:**
@@ -809,17 +809,18 @@ Cursor IDE ──(stdio)──▶ MCP Server (local Python process) ──(HTTPS
   "mcpServers": {
     "video-knowledge": {
       "command": "python",
-      "args": ["-m", "src.server"],
+      "args": ["-m", "src"],
       "cwd": "<workshop-path>/modules/mcp-server",
       "env": {
-        "API_ENDPOINT": "https://<api-gateway-url>/prod"
+        "API_ENDPOINT": "https://<api-gateway-url>/prod",
+        "API_KEY": "<question-api-key>"
       }
     }
   }
 }
 ```
 
-**Dependencies:** `mcp[cli]`, `httpx`, `pydantic`
+**Dependencies:** `fastmcp`, `httpx`, `pydantic-settings`
 
 **No Terraform Resources:** Runs locally. Only needs the API Gateway URL from the question endpoint deployment.
 
@@ -1409,48 +1410,31 @@ embedding = result["embedding"]    # List of floats
 token_count = result["inputTextTokenCount"]
 ```
 
-### Appendix D: MCP Server Skeleton
+### Appendix D: MCP Server Skeleton (FastMCP)
 
 ```python
-from mcp.server import Server
-from mcp.types import Tool, TextContent
+from fastmcp import FastMCP
 import httpx
 
-app = Server("video-knowledge")
+mcp = FastMCP("video-knowledge")
 
-@app.list_tools()
-async def list_tools():
-    return [
-        Tool(
-            name="ask_video_question",
-            description="Ask a question about indexed video content",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "question": {
-                        "type": "string",
-                        "description": "The question to ask"
-                    },
-                    "top_k": {
-                        "type": "integer",
-                        "description": "Number of results",
-                        "default": 5
-                    }
-                },
-                "required": ["question"]
-            }
+API_ENDPOINT = "https://<api-gateway-url>/prod"
+API_KEY = "<question-api-key>"
+
+@mcp.tool
+def ask_video_question(question: str, top_k: int = 5) -> str:
+    """Ask a question about indexed video content."""
+    with httpx.Client(base_url=API_ENDPOINT, timeout=30.0) as client:
+        response = client.post(
+            "/ask",
+            json={"question": question, "top_k": top_k},
+            headers={"x-api-key": API_KEY},
         )
-    ]
+        response.raise_for_status()
+        return str(response.json())
 
-@app.call_tool()
-async def call_tool(name: str, arguments: dict):
-    if name == "ask_video_question":
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{API_ENDPOINT}/ask",
-                json=arguments
-            )
-            return [TextContent(type="text", text=response.text)]
+if __name__ == "__main__":
+    mcp.run()
 ```
 
 ### Appendix E: Cleanup Script
