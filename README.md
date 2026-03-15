@@ -29,8 +29,8 @@ graph TD
     Embed --> Bedrock["Bedrock<br/>Titan V2"]
     Embed --> Aurora[("Aurora pgvector<br/><i>VPC</i>")]
 
-    Aurora -.->|"planned · stages 6-7"| Question["Question Endpoint<br/><i>API Gateway</i>"]
-    Question -.-> MCP["MCP Server<br/><i>Cursor IDE</i>"]
+    Aurora --> Question["Question Endpoint<br/><i>API Gateway</i>"]
+    Question -.->|"planned · stage 7"| MCP["MCP Server<br/><i>Cursor IDE</i>"]
 ```
 
 ## Technology Stack
@@ -240,12 +240,14 @@ production-rag/
 │       ├── aurora-vectordb/  #   Aurora Serverless v2 + pgvector + Secrets Manager
 │       ├── step-functions/   #   State machine + EventBridge rule
 │       ├── sqs/              #   Embedding queue + DLQ
+│       ├── api-gateway/      #   REST API for question service
 │       └── networking/       #   Default VPC, security groups, VPC endpoints
 ├── modules/
 │   ├── transcribe-module/    # S3 video ──▶ AWS Transcribe ──▶ transcript JSON
 │   ├── chunking-module/      # Transcript ──▶ overlapping text chunks ──▶ SQS
 │   ├── embedding-module/     # SQS ──▶ Bedrock Titan V2 ──▶ Aurora pgvector
 │   ├── embedding-endpoint/   # HTTP endpoint to embed arbitrary text (Lambda Function URL)
+│   ├── question-endpoint/    # Question ──▶ embed ──▶ vector search ──▶ results (API Gateway)
 │   └── migration-module/     # Alembic migrations for Aurora pgvector schema
 ├── layers/                   # Lambda layers (psycopg2)
 ├── scripts/                  # Build scripts (psycopg2 layer, migration packaging)
@@ -254,7 +256,8 @@ production-rag/
 │   ├── 01-video-upload-and-workflow/
 │   ├── 02-transcription/
 │   ├── 03-chunking-and-fanout/
-│   └── 04-embed-and-store/
+│   ├── 04-embed-and-store/
+│   └── 05-retrieval/
 ├── tests/                    # Integration/verification scripts per stage
 ├── PRD.md                    # Full Product Requirements Document
 └── README.md                 # This file
@@ -262,11 +265,9 @@ production-rag/
 
 ### Planned (not yet implemented)
 
-These modules are described in the [PRD](PRD.md) and will be built during workshop stages 6-7:
+This module is described in the [PRD](PRD.md) and will be built during workshop stage 7:
 
-- `modules/question-endpoint/` -- Question ➜ embed ➜ vector search ➜ answer (API Gateway)
 - `modules/mcp-server/` -- MCP server wrapping the question API for Cursor IDE
-- `infra/modules/api-gateway/` -- REST API Terraform module for the question service
 
 ### Module layout
 
