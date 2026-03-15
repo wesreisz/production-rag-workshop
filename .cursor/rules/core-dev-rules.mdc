@@ -25,7 +25,7 @@ Do not affirm my statements or assume my conclusions are correct. Question assum
 - Keep imports alphabetically sorted
 - Keep code SOLID but simple - separation of concerns without over-engineering
 - Aim to keep files under 300 lines - split when it improves clarity
-- Write tests for critical paths only. Use AAA pattern with comments. Learn from examples
+- Write tests first — create tests before implementation code. Use AAA pattern with comments. Learn from examples. Test critical paths only
 - Test your tests and run npm run lint for lint check
 - Use relative paths for internal documentation links (e.g., `docs/guide.md` not `/Users/...` or absolute URLs)
 
