@@ -35,5 +35,8 @@ modules/migration-module/sqlalchemy/
 modules/migration-module/typing_extensions.py
 modules/migration-module/*.dist-info/
 
+# Cursor MCP config (contains secrets)
+.cursor/mcp.json
+
 # Large binary samples
 samples/*.mp4

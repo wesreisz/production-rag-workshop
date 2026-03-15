@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "video-knowledge": {
+      "command": "/path/to/python",
+      "args": ["-m", "src"],
+      "env": {
+        "PYTHONPATH": "/path/to/production-rag/modules/mcp-server",
+        "API_ENDPOINT": "https://YOUR_API_ID.execute-api.us-east-1.amazonaws.com/prod",
+        "API_KEY": "YOUR_API_KEY"
+      }
+    }
+  }
+}

@@ -30,7 +30,7 @@ graph TD
     Embed --> Aurora[("Aurora pgvector<br/><i>VPC</i>")]
 
     Aurora --> Question["Question Endpoint<br/><i>API Gateway</i>"]
-    Question -.->|"planned · stage 7"| MCP["MCP Server<br/><i>Cursor IDE</i>"]
+    Question --> MCP["MCP Server<br/><i>Cursor IDE</i>"]
 ```
 
 ## Technology Stack
@@ -248,6 +248,7 @@ production-rag/
 │   ├── embedding-module/     # SQS ──▶ Bedrock Titan V2 ──▶ Aurora pgvector
 │   ├── embedding-endpoint/   # HTTP endpoint to embed arbitrary text (Lambda Function URL)
 │   ├── question-endpoint/    # Question ──▶ embed ──▶ vector search ──▶ results (API Gateway)
+│   ├── mcp-server/           # MCP server wrapping question API for Cursor IDE
 │   └── migration-module/     # Alembic migrations for Aurora pgvector schema
 ├── layers/                   # Lambda layers (psycopg2)
 ├── scripts/                  # Build scripts (psycopg2 layer, migration packaging)
@@ -257,17 +258,72 @@ production-rag/
 │   ├── 02-transcription/
 │   ├── 03-chunking-and-fanout/
 │   ├── 04-embed-and-store/
-│   └── 05-retrieval/
+│   ├── 05-retrieval/
+│   └── 06-mcp-server/
 ├── tests/                    # Integration/verification scripts per stage
 ├── PRD.md                    # Full Product Requirements Document
 └── README.md                 # This file
 ```
 
-### Planned (not yet implemented)
+### MCP Server Setup (Stage 7)
 
-This module is described in the [PRD](PRD.md) and will be built during workshop stage 7:
+The MCP server (`modules/mcp-server/`) connects Cursor IDE to the Question API, exposing three tools: `ask_video_question`, `list_indexed_videos`, and `search_by_speaker`.
 
-- `modules/mcp-server/` -- MCP server wrapping the question API for Cursor IDE
+**Install dependencies:**
+
+```bash
+cd modules/mcp-server
+pip install -r requirements.txt -r dev-requirements.txt
+```
+
+**Run tests:**
+
+```bash
+cd modules/mcp-server
+python -m pytest tests/ -v
+```
+
+**Verify config validation (should fail with helpful error):**
+
+```bash
+cd modules/mcp-server
+python -m src
+```
+
+**Get your API credentials from Terraform:**
+
+```bash
+cd infra/environments/dev
+terraform output -raw question_api_url     # → API_ENDPOINT
+terraform output -raw question_api_key     # → API_KEY
+```
+
+**Configure Cursor IDE:**
+
+Add to `.cursor/mcp.json` in the project root:
+
+```json
+{
+  "mcpServers": {
+    "video-knowledge": {
+      "command": "python",
+      "args": ["-m", "src"],
+      "cwd": "modules/mcp-server",
+      "env": {
+        "API_ENDPOINT": "https://<your-api-gateway-url>/prod",
+        "API_KEY": "<your-question-api-key>"
+      }
+    }
+  }
+}
+```
+
+**Verify in Cursor:**
+
+1. Open **Cursor Settings > MCP** -- confirm `video-knowledge` shows a green status
+2. Ask in chat: *"What videos are indexed in the knowledge base?"* -- invokes `list_indexed_videos`
+3. Ask: *"What is this video about?"* -- invokes `ask_video_question`
+4. Ask: *"What did Wesley Reisz say about RAG pipelines?"* -- invokes `search_by_speaker`
 
 ### Module layout
 

@@ -144,9 +144,9 @@ An `ApiClient` class encapsulates all HTTP communication with the Question API.
 
 | Method | Input | HTTP Call | Returns |
 |--------|-------|-----------|---------|
-| `ask(question, top_k, speaker=None)` | question string, top_k int, optional speaker string | `POST /ask` with JSON body and `x-api-key` header | `dict` (parsed JSON response) |
-| `list_videos()` | — | `GET /videos` with `x-api-key` header | `dict` (parsed JSON response) |
-| `health()` | — | `GET /health` with `x-api-key` header | `dict` (parsed JSON response) |
+| `async ask(question, top_k, speaker=None)` | question string, top_k int, optional speaker string | `POST /ask` with JSON body and `x-api-key` header | `dict` (parsed JSON response) |
+| `async list_videos()` | — | `GET /videos` with `x-api-key` header | `dict` (parsed JSON response) |
+| `async health()` | — | `GET /health` with `x-api-key` header | `dict` (parsed JSON response) |
 
 **Error handling:**
 
@@ -219,12 +219,13 @@ A `get_settings()` function with `@lru_cache` returns a singleton instance.
 
 ### Part C: API Client (api_client.py)
 
+Uses `httpx.AsyncClient` with per-call lifecycle (Option A — `async with` context manager creates a fresh client for each request). All methods are `async def`.
+
 | Attribute | Description |
 |-----------|-------------|
 | `self.settings` | `Settings` instance |
-| `self._client` | `httpx.Client(timeout=30.0, base_url=settings.api_endpoint)` |
 
-All requests include `headers={"x-api-key": self.settings.api_key}`.
+All requests create `httpx.AsyncClient(timeout=30.0, base_url=self.settings.api_endpoint)` via `async with` and include `headers={"x-api-key": self.settings.api_key}`.
 
 **`ask` method request body:**
 
