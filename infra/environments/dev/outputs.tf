@@ -78,3 +78,19 @@ output "embed_text_api_key" {
   sensitive   = true
 }
 
+output "question_api_url" {
+  description = "Question API Gateway base URL"
+  value       = module.question_api.api_url
+}
+
+output "question_api_key" {
+  description = "API key for the question endpoint"
+  value       = module.question_api.api_key_value
+  sensitive   = true
+}
+
+output "question_function_name" {
+  description = "Question Lambda function name"
+  value       = module.question.function_name
+}
+
