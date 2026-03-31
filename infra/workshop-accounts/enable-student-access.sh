@@ -257,22 +257,6 @@ echo "  -> Alerts at 50%, 80%, 100% -> $NOTIFICATION_EMAIL"
 echo ""
 
 # ------------------------------------------------------------------
-# Bedrock model access note
-# ------------------------------------------------------------------
-echo "[5/5] Bedrock model access..."
-echo ""
-echo "  !! MANUAL STEP REQUIRED !!"
-echo "  Bedrock foundation model access must be enabled via the AWS Console."
-echo "  1. Log in to: $CONSOLE_URL"
-echo "     (or assume role from management account)"
-echo "  2. Go to: Amazon Bedrock > Model access (us-east-1)"
-echo "  3. Request access to:"
-echo "     - Amazon Titan Text Embeddings V2"
-echo "     - Anthropic Claude 3 Haiku"
-echo "  4. Wait for approval (usually instant for these models)"
-echo ""
-
-# ------------------------------------------------------------------
 # Clear assumed-role credentials
 # ------------------------------------------------------------------
 unset AWS_ACCESS_KEY_ID
@@ -292,5 +276,5 @@ echo "  Console URL:   $CONSOLE_URL"
 echo "  Credentials:   $CRED_FILE"
 echo "  Budget:        \$${BUDGET_LIMIT}/month"
 echo ""
-echo "  Remaining manual step: Enable Bedrock model access (see above)"
+echo "  Bedrock Titan models are available by default — no manual step needed."
 echo ""

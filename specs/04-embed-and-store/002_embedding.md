@@ -21,7 +21,7 @@
 - [ ] Secrets Manager secret contains valid database credentials
 - [ ] VPC endpoints for S3, Bedrock Runtime, and Secrets Manager are available
 - [ ] psycopg2 Lambda layer is deployed
-- [ ] Bedrock model access is enabled for `amazon.titan-embed-text-v2:0`
+- [ ] Bedrock `amazon.titan-embed-text-v2:0` is available (enabled by default)
 
 ---
 

@@ -22,7 +22,7 @@
 - [ ] AWS CLI configured with credentials that have permissions for VPC, RDS, Secrets Manager, and Lambda
 - [ ] Docker installed locally (required for building the psycopg2 Lambda layer)
 - [ ] Python 3.11+ with `pip` and `venv` support (required for Alembic migrations)
-- [ ] Bedrock model access enabled for `amazon.titan-embed-text-v2:0` in the AWS Console (Amazon Bedrock > Model Access)
+- [ ] Bedrock `amazon.titan-embed-text-v2:0` is available (enabled by default)
 
 ---
 

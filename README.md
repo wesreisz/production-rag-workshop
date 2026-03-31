@@ -87,7 +87,7 @@ docker --version       # Docker 20+
 
 ### AWS account setup
 
-You also need an AWS account with billing enabled (or a provided workshop account). After installing the AWS CLI, configure credentials so that `aws sts get-caller-identity` succeeds. In the AWS Console, navigate to **Amazon Bedrock > Model Access** and request access to `amazon.titan-embed-text-v2:0` and `anthropic.claude-3-haiku`.
+You also need an AWS account with billing enabled (or a provided workshop account). After installing the AWS CLI, configure credentials so that `aws sts get-caller-identity` succeeds.
 
 ---
 
