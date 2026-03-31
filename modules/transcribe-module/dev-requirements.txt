@@ -1,2 +1,0 @@
-pytest
-moto[transcribe,s3]
