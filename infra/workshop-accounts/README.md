@@ -13,6 +13,12 @@ Each student gets their own AWS account with:
 
 - AWS CLI configured with **management account** credentials
 - A Gmail address (uses `+` addressing for unique per-student emails)
+- login to admin account:
+
+```
+export AWS_PROFILE=workshop-admin
+aws sts get-caller-identity
+```
 
 ## Setup Sequence
 
