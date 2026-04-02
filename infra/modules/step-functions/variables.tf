@@ -25,6 +25,12 @@ variable "additional_policy_json" {
   default     = null
 }
 
+variable "enable_additional_policy" {
+  description = "Whether to attach the additional IAM policy"
+  type        = bool
+  default     = false
+}
+
 variable "tags" {
   description = "Resource tags"
   type        = map(string)

@@ -47,7 +47,7 @@ resource "aws_iam_role_policy" "logging" {
 }
 
 resource "aws_iam_role_policy" "additional" {
-  count  = var.additional_policy_json != null ? 1 : 0
+  count  = var.enable_additional_policy ? 1 : 0
   name   = "additional"
   role   = aws_iam_role.execution.id
   policy = var.additional_policy_json
