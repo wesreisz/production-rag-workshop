@@ -1,7 +1,16 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-TF_DIR="$(cd "$(dirname "$0")/../../infra/environments/dev" && pwd)"
+TF_DIR="$(dirname "$0")/../../infra/environments/dev"
+if [ ! -d "$TF_DIR" ]; then
+  echo "ERROR: Terraform directory not found at: $TF_DIR"
+  echo ""
+  echo "This script reads the S3 bucket name and Step Functions state machine ARN"
+  echo "from Terraform outputs. Deploy the infrastructure first:"
+  echo "  cd infra/environments/dev && terraform apply"
+  exit 1
+fi
+TF_DIR="$(cd "$TF_DIR" && pwd)"
 
 BUCKET=$(terraform -chdir="$TF_DIR" output -raw media_bucket_name)
 STATE_MACHINE=$(terraform -chdir="$TF_DIR" output -raw state_machine_arn)
