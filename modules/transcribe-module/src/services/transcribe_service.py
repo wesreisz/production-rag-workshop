@@ -10,8 +10,17 @@ SUPPORTED_FORMATS = {"mp3", "mp4", "wav", "flac", "ogg", "amr", "webm"}
 
 
 class TranscribeService:
-    def __init__(self, transcribe_client=None):
+    def __init__(self, transcribe_client=None, s3_client=None):
         self.transcribe_client = transcribe_client or boto3.client("transcribe")
+        self.s3_client = s3_client or boto3.client("s3")
+
+    def get_upload_metadata(self, bucket, key):
+        response = self.s3_client.head_object(Bucket=bucket, Key=key)
+        metadata = response.get("Metadata", {})
+        return {
+            "speaker": metadata.get("speaker"),
+            "title": metadata.get("title"),
+        }
 
     @staticmethod
     def derive_video_id(s3_key):

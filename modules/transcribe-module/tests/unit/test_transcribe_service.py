@@ -87,6 +87,45 @@ class TestDetectMediaFormat:
             TranscribeService.detect_media_format(s3_key)
 
 
+class TestGetUploadMetadata:
+    def test_returns_speaker_and_title(self, mock_aws_services):
+        # Arrange
+        s3_client = mock_aws_services["s3"]
+        s3_client.create_bucket(Bucket="test-bucket")
+        s3_client.put_object(
+            Bucket="test-bucket",
+            Key="uploads/sample.mp3",
+            Body=b"fake audio",
+            Metadata={"speaker": "Jane", "title": "Talk"},
+        )
+        svc = TranscribeService(s3_client=s3_client)
+
+        # Act
+        result = svc.get_upload_metadata("test-bucket", "uploads/sample.mp3")
+
+        # Assert
+        assert result["speaker"] == "Jane"
+        assert result["title"] == "Talk"
+
+    def test_returns_none_when_no_metadata(self, mock_aws_services):
+        # Arrange
+        s3_client = mock_aws_services["s3"]
+        s3_client.create_bucket(Bucket="test-bucket")
+        s3_client.put_object(
+            Bucket="test-bucket",
+            Key="uploads/sample.mp3",
+            Body=b"fake audio",
+        )
+        svc = TranscribeService(s3_client=s3_client)
+
+        # Act
+        result = svc.get_upload_metadata("test-bucket", "uploads/sample.mp3")
+
+        # Assert
+        assert result["speaker"] is None
+        assert result["title"] is None
+
+
 class TestStartJob:
     def test_starts_transcription_job(self, mock_aws_services):
         # Arrange

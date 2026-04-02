@@ -17,6 +17,7 @@ def handler(event, context):
         )
 
         video_id = service.derive_video_id(key)
+        metadata = service.get_upload_metadata(bucket, key)
         result = service.start_job(bucket, key, video_id)
 
         return {
@@ -27,6 +28,8 @@ def handler(event, context):
                 "bucket_name": bucket,
                 "source_key": key,
                 "video_id": video_id,
+                "speaker": metadata.get("speaker"),
+                "title": metadata.get("title"),
                 "status": result["status"],
             },
         }
