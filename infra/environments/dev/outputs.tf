@@ -57,3 +57,13 @@ output "lambda_security_group_id" {
   description = "Lambda security group ID"
   value       = module.networking.lambda_security_group_id
 }
+
+output "embedding_function_name" {
+  description = "Embedding Lambda function name"
+  value       = module.embed_chunk.function_name
+}
+
+output "embedding_dlq_url" {
+  description = "Embedding dead-letter queue URL"
+  value       = aws_sqs_queue.embedding_dlq.url
+}

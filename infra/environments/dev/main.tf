@@ -56,13 +56,13 @@ module "start_transcription" {
     Version = "2012-10-17"
     Statement = [
       {
-        Effect = "Allow"
-        Action = ["s3:GetObject"]
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
         Resource = "${module.media_bucket.bucket_arn}/*"
       },
       {
-        Effect = "Allow"
-        Action = ["s3:PutObject"]
+        Effect   = "Allow"
+        Action   = ["s3:PutObject"]
         Resource = "${module.media_bucket.bucket_arn}/transcripts/*"
       },
       {
@@ -178,15 +178,15 @@ module "run_migrations" {
 
   depends_on = [null_resource.build_migration_deps, module.aurora_vectordb]
 
-  function_name = "${var.project_name}-run-migrations"
-  handler       = "src.handlers.run_migrations.handler"
-  timeout       = 300
-  memory_size   = 256
-  source_dir    = "${path.module}/../../../modules/migration-module"
-  subnet_ids    = module.networking.subnet_ids
+  function_name      = "${var.project_name}-run-migrations"
+  handler            = "src.handlers.run_migrations.handler"
+  timeout            = 300
+  memory_size        = 256
+  source_dir         = "${path.module}/../../../modules/migration-module"
+  subnet_ids         = module.networking.subnet_ids
   security_group_ids = [module.networking.lambda_security_group_id]
-  layers        = [aws_lambda_layer_version.psycopg2.arn]
-  tags          = local.common_tags
+  layers             = [aws_lambda_layer_version.psycopg2.arn]
+  tags               = local.common_tags
 
   environment_variables = {
     SECRET_ARN = module.aurora_vectordb.secret_arn
@@ -228,6 +228,57 @@ resource "null_resource" "run_migrations" {
   }
 }
 
+module "embed_chunk" {
+  source             = "../../modules/lambda-vpc"
+  function_name      = "${var.project_name}-embed-chunk"
+  handler            = "src.handlers.process_embedding.handler"
+  source_dir         = "${path.module}/../../../modules/embedding-module"
+  timeout            = 120
+  layers             = [aws_lambda_layer_version.psycopg2.arn]
+  subnet_ids         = module.networking.subnet_ids
+  security_group_ids = [module.networking.lambda_security_group_id]
+  tags               = local.common_tags
+
+  environment_variables = {
+    SECRET_ARN           = module.aurora_vectordb.secret_arn
+    DB_NAME              = module.aurora_vectordb.db_name
+    EMBEDDING_DIMENSIONS = "256"
+  }
+
+  policy_statements = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${module.media_bucket.bucket_arn}/chunks/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeModel"]
+        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = module.aurora_vectordb.secret_arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["sqs:ReceiveMessage", "sqs:DeleteMessage", "sqs:GetQueueAttributes"]
+        Resource = aws_sqs_queue.embedding.arn
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_event_source_mapping" "embedding" {
+  event_source_arn = aws_sqs_queue.embedding.arn
+  function_name    = module.embed_chunk.function_arn
+  batch_size       = 1
+  enabled          = true
+}
+
 module "pipeline" {
   source = "../../modules/step-functions"
 
@@ -237,7 +288,7 @@ module "pipeline" {
   tags               = local.common_tags
 
   enable_additional_policy = true
-  additional_policy_json   = jsonencode({
+  additional_policy_json = jsonencode({
     Version = "2012-10-17"
     Statement = [
       {
@@ -351,12 +402,12 @@ module "pipeline" {
           FunctionName = module.chunk_transcript.function_arn
           "Payload" = {
             "detail" = {
-              "bucket_name.$"        = "$.transcription.detail.bucket_name"
-              "transcript_s3_key.$"  = "$.transcription.detail.transcript_s3_key"
-              "video_id.$"           = "$.transcription.detail.video_id"
-              "source_key.$"         = "$.transcription.detail.source_key"
-              "speaker.$"            = "$.transcription.detail.speaker"
-              "title.$"              = "$.transcription.detail.title"
+              "bucket_name.$"       = "$.transcription.detail.bucket_name"
+              "transcript_s3_key.$" = "$.transcription.detail.transcript_s3_key"
+              "video_id.$"          = "$.transcription.detail.video_id"
+              "source_key.$"        = "$.transcription.detail.source_key"
+              "speaker.$"           = "$.transcription.detail.speaker"
+              "title.$"             = "$.transcription.detail.title"
             }
           }
         }
