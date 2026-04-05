@@ -21,7 +21,7 @@ def handler(event, context):
 
     engine = create_engine(connection_url)
 
-    migrations_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "migrations")
+    migrations_dir = os.path.join(os.path.dirname(__file__), "..", "..", "migrations")
     alembic_cfg = Config(os.path.join(migrations_dir, "alembic.ini"))
     alembic_cfg.set_main_option("script_location", migrations_dir)
 

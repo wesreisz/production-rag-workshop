@@ -21,6 +21,13 @@ resource "aws_security_group" "lambda" {
   vpc_id = data.aws_vpc.default.id
   tags   = var.tags
 
+  ingress {
+    from_port = 443
+    to_port   = 443
+    protocol  = "tcp"
+    self      = true
+  }
+
   egress {
     from_port   = 0
     to_port     = 0

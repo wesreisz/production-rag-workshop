@@ -221,9 +221,10 @@ resource "null_resource" "run_migrations" {
         --function-name ${module.run_migrations.function_name} \
         --payload '{}' \
         --cli-binary-format raw-in-base64-out \
-        --cli-read-timeout 300 \
+        --cli-read-timeout 310 \
         /tmp/migration-response.json
       cat /tmp/migration-response.json
+      grep -q '"errorMessage"' /tmp/migration-response.json && exit 1 || true
     EOT
   }
 }
