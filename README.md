@@ -61,7 +61,51 @@ graph TD
 | 17:15 | 60 min | MCP Server & Cursor Integration |
 | 18:15 | 30 min | Wrap-Up: Production Concerns & Next Steps |
 
-## Local Prerequisites
+## Local Development Environment
+
+### Option A: Dev Container (Recommended)
+
+The repo ships with a dev container that provides Python 3.11, AWS CLI, and Terraform pre-installed. No manual tool installation required.
+
+**Prerequisites:**
+- [Colima](https://github.com/abiosoft/colima) (or Docker Desktop) running
+- [Dev Containers extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode-remote.remote-containers) installed in Cursor
+
+**Start Colima (if not already running):**
+
+```bash
+colima start
+```
+
+**Export your AWS credentials into your shell before opening Cursor:**
+
+```bash
+# Static credentials
+export AWS_ACCESS_KEY_ID=your-key-id
+export AWS_SECRET_ACCESS_KEY=your-secret-key
+export AWS_DEFAULT_REGION=us-east-1
+
+# If using AWS SSO/profiles, resolve and export the credentials first:
+eval $(aws configure export-credentials --profile your-profile --format env)
+```
+
+**Reopen the project in the container:**
+
+1. Open the Command Palette in Cursor: `Cmd+Shift+P`
+2. Select **Dev Containers: Reopen in Container**
+3. Wait ~2–3 minutes on first launch while the image is pulled and dependencies are installed
+
+Your terminal inside Cursor is now running inside the container with all tools available. Verify with:
+
+```bash
+python --version    # Python 3.11
+aws --version       # aws-cli/2.x
+terraform --version # Terraform v1.x
+```
+
+---
+
+### Option B: Local Prerequisites
 
 Install all of the following before starting the workshop.
 
