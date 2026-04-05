@@ -563,7 +563,7 @@ Same as `EmbeddingService.generate_embedding()`:
 10. Return the list of dicts
 11. On any exception: reset `self._db_conn = None` (invalidate stale connection so next invocation reconnects), then re-raise
 
-The similarity threshold is applied in Python after the query (post-filter) rather than in SQL. This keeps the SQL simple and avoids a subquery. The `LIMIT` still caps the pgvector scan, and the threshold trims low-relevance results from the response.
+The similarity threshold is applied in Python after the query (post-filter), not in SQL. This is intentional: adding `WHERE 1 - (embedding <=> %s::vector) >= threshold` in SQL would require a subquery or CTE to alias the computed column, complicating the query. Instead, the `LIMIT` caps the pgvector scan and the threshold trims low-relevance results from the response in Python.
 
 If the query fails due to a stale or broken connection, setting `self._db_conn = None` ensures the next Lambda invocation will establish a fresh connection rather than reusing the broken one.
 
@@ -595,8 +595,9 @@ Same as the embedding module. `psycopg2-binary` is for local development; the La
 
 ```
 pytest
-moto[secretsmanager]
 ```
+
+No moto needed — all AWS clients are replaced with `MagicMock` in tests. `unittest.mock` from the stdlib is sufficient; `pytest-mock` is not required.
 
 ---
 
@@ -627,11 +628,12 @@ moto[secretsmanager]
 | Fixture | Description |
 |---------|-------------|
 | `aws_credentials` | Set mock AWS env vars + `SECRET_ARN`, `DB_NAME`, `EMBEDDING_DIMENSIONS` |
-| `mock_aws_services` | `mock_aws()` context |
 | `sample_ask_event` | API Gateway proxy event for `POST /ask` with question and top_k |
 | `sample_video_ask_event` | API Gateway proxy event for `POST /videos/{video_id}/ask` with `pathParameters: {"video_id": "hello-my_name_is_wes"}` |
 | `sample_health_event` | API Gateway proxy event for `GET /health` |
 | `sample_videos_event` | API Gateway proxy event for `GET /videos` |
+
+No `mock_aws_services` fixture — no moto services are exercised. All Bedrock and psycopg2 interactions are replaced with `MagicMock` directly in each test.
 
 ---
 
@@ -713,7 +715,7 @@ Add one Lambda module call and one API Gateway module call to `infra/environment
 - [ ] 2. Create `infra/modules/api-gateway/main.tf` with REST API, resources (`/ask`, `/videos`, `/videos/{video_id}`, `/videos/{video_id}/ask`, `/health`), methods (`api_key_required = true`), Lambda proxy integrations, API key, usage plan (rate 50/s, burst 100, daily quota 10000), deployment with triggers, stage, Lambda permission
 - [ ] 3. Create `infra/modules/api-gateway/outputs.tf` with `api_url`, `rest_api_id`, `api_key_value`
 - [ ] 4. Create `modules/question-endpoint/requirements.txt` with `boto3`, `psycopg2-binary`
-- [ ] 5. Create `modules/question-endpoint/dev-requirements.txt` with `pytest`, `moto[secretsmanager]`
+- [ ] 5. Create `modules/question-endpoint/dev-requirements.txt` with `pytest` only (no moto — all AWS clients are `MagicMock`)
 - [ ] 6. Create all `__init__.py` files (`src/`, `src/handlers/`, `src/services/`, `src/utils/`, `tests/`, `tests/unit/`)
 - [ ] 7. Create `modules/question-endpoint/src/utils/logger.py`
 - [ ] 8. Create `modules/question-endpoint/tests/conftest.py` with shared fixtures
