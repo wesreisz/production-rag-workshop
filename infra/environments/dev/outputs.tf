@@ -78,3 +78,19 @@ output "embed_text_api_key" {
   value       = random_password.embed_text_api_key.result
   sensitive   = true
 }
+
+output "question_api_url" {
+  description = "API Gateway base URL for the question endpoint"
+  value       = module.question_api.api_url
+}
+
+output "question_api_key" {
+  description = "API key for the question endpoint (use in x-api-key header)"
+  value       = module.question_api.api_key_value
+  sensitive   = true
+}
+
+output "question_function_name" {
+  description = "Question Lambda function name"
+  value       = module.question.function_name
+}

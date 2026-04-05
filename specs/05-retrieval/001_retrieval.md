@@ -559,9 +559,9 @@ Same as `EmbeddingService.generate_embedding()`:
 6. Fetch all rows
 7. Convert each row to a dict with keys: `chunk_id`, `video_id`, `text`, `similarity`, `speaker`, `title`, `start_time`, `end_time`, `source_s3_key`
 8. Filter results: discard any row where `similarity < similarity_threshold`
-9. Close cursor (not connection — connection is cached)
-10. Return the list of dicts
-11. On any exception: reset `self._db_conn = None` (invalidate stale connection so next invocation reconnects), then re-raise
+9. Return the list of dicts
+10. On any exception: reset `self._db_conn = None` (invalidate stale connection so next invocation reconnects), then re-raise
+11. Always close cursor in a `finally` block (not connection — connection is cached); this guarantees the cursor is closed on both the success and exception paths
 
 The similarity threshold is applied in Python after the query (post-filter), not in SQL. This is intentional: adding `WHERE 1 - (embedding <=> %s::vector) >= threshold` in SQL would require a subquery or CTE to alias the computed column, complicating the query. Instead, the `LIMIT` caps the pgvector scan and the threshold trims low-relevance results from the response in Python.
 
@@ -574,9 +574,9 @@ If the query fails due to a stale or broken connection, setting `self._db_conn =
 3. Execute the aggregate SQL
 4. Fetch all rows
 5. Convert each row to a dict with keys: `video_id`, `speaker`, `title`, `chunk_count`
-6. Close cursor
-7. Return the list of dicts
-8. On any exception: reset `self._db_conn = None`, then re-raise
+6. Return the list of dicts
+7. On any exception: reset `self._db_conn = None`, then re-raise
+8. Always close cursor in a `finally` block (guarantees closure on both success and exception paths)
 
 ---
 
