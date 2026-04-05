@@ -67,3 +67,14 @@ output "embedding_dlq_url" {
   description = "Embedding dead-letter queue URL"
   value       = aws_sqs_queue.embedding_dlq.url
 }
+
+output "embed_text_endpoint_url" {
+  description = "Public URL for generating embeddings"
+  value       = aws_lambda_function_url.embed_text.function_url
+}
+
+output "embed_text_api_key" {
+  description = "API key for the embedding endpoint"
+  value       = random_password.embed_text_api_key.result
+  sensitive   = true
+}

@@ -280,6 +280,56 @@ resource "aws_lambda_event_source_mapping" "embedding" {
   enabled          = true
 }
 
+resource "random_password" "embed_text_api_key" {
+  length  = 32
+  special = false
+}
+
+module "embed_text_endpoint" {
+  source        = "../../modules/lambda"
+  function_name = "${var.project_name}-embed-text"
+  handler       = "src.handlers.embed_text.handler"
+  source_dir    = "${path.module}/../../../modules/embedding-endpoint"
+  timeout       = 30
+  tags          = local.common_tags
+
+  environment_variables = {
+    EMBEDDING_DIMENSIONS = "256"
+    API_KEY              = random_password.embed_text_api_key.result
+  }
+
+  policy_statements = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["bedrock:InvokeModel"]
+        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0"
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_function_url" "embed_text" {
+  function_name      = module.embed_text_endpoint.function_name
+  authorization_type = "NONE"
+}
+
+resource "aws_lambda_permission" "embed_text_public_url" {
+  statement_id           = "FunctionURLAllowPublicAccess"
+  action                 = "lambda:InvokeFunctionUrl"
+  function_name          = module.embed_text_endpoint.function_name
+  principal              = "*"
+  function_url_auth_type = "NONE"
+}
+
+resource "aws_lambda_permission" "embed_text_public_invoke" {
+  statement_id  = "FunctionURLInvokeAllowPublicAccess"
+  action        = "lambda:InvokeFunction"
+  function_name = module.embed_text_endpoint.function_name
+  principal     = "*"
+}
+
 module "pipeline" {
   source = "../../modules/step-functions"
 

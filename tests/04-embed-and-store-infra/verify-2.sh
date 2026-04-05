@@ -232,15 +232,50 @@ echo "  Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 echo "  (pgvector checks available via RDS Query Editor)"
 echo "========================================="
 
-if [ -n "$EMBED_URL" ] && [ -n "$EMBED_KEY" ]; then
+echo ""
+echo "=== 13. Embedding endpoint curl tests ==="
+if [ -z "$EMBED_URL" ] || [ -z "$EMBED_KEY" ]; then
+  fail "embed_text_endpoint_url or embed_text_api_key output not found — run 'terraform apply' to deploy the embedding endpoint (003)"
+else
+  echo "  Running curl tests against $EMBED_URL"
   echo ""
-  echo "You can curl the embedding endpoint directly with:"
+
+  echo "  --- Test 1: Valid request (expect 256-dim vector) ---"
+  RESPONSE_200=$(curl -s -o /tmp/embed_200.json -w "%{http_code}" -X POST "$EMBED_URL" \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: $EMBED_KEY" \
+    -d '{"text": "What did Wes talk about?"}')
+  if [ "$RESPONSE_200" = "200" ] && grep -q '"embedding"' /tmp/embed_200.json; then
+    pass "Returns 200 with embedding vector"
+    cat /tmp/embed_200.json | python3 -m json.tool 2>/dev/null | head -5
+    echo "  ..."
+  else
+    fail "Expected 200 with embedding, got HTTP $RESPONSE_200"
+    cat /tmp/embed_200.json 2>/dev/null
+  fi
+
   echo ""
-  echo "  curl -s \"$EMBED_URL\" \\"
-  echo "    -H \"Content-Type: application/json\" \\"
-  echo "    -H \"x-api-key: $EMBED_KEY\" \\"
-  echo "    -d '{\"text\": \"Hello, my name is Wes\"}' | jq"
+  echo "  --- Test 2: Missing API key (expect 401) ---"
+  RESPONSE_401=$(curl -s -o /tmp/embed_401.json -w "%{http_code}" -X POST "$EMBED_URL" \
+    -H "Content-Type: application/json" \
+    -d '{"text": "hello"}')
+  if [ "$RESPONSE_401" = "401" ]; then
+    pass "Returns 401 when x-api-key header is missing"
+  else
+    fail "Expected 401, got HTTP $RESPONSE_401: $(cat /tmp/embed_401.json 2>/dev/null)"
+  fi
+
   echo ""
+  echo "  --- Test 3: Missing text field (expect 400) ---"
+  RESPONSE_400=$(curl -s -o /tmp/embed_400.json -w "%{http_code}" -X POST "$EMBED_URL" \
+    -H "Content-Type: application/json" \
+    -H "x-api-key: $EMBED_KEY" \
+    -d '{}')
+  if [ "$RESPONSE_400" = "400" ]; then
+    pass "Returns 400 when text field is missing"
+  else
+    fail "Expected 400, got HTTP $RESPONSE_400: $(cat /tmp/embed_400.json 2>/dev/null)"
+  fi
 fi
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
