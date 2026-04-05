@@ -54,6 +54,16 @@ GROUP BY video_id, speaker, title
 ORDER BY video_id;
 """
 
+VIDEO_METADATA_SQL = """SELECT DISTINCT source_s3_key, speaker, title
+FROM video_chunks
+WHERE video_id = %s
+LIMIT 1"""
+
+CHUNK_METADATA_SQL = """SELECT source_s3_key, video_id, speaker, title, start_time, end_time
+FROM video_chunks
+WHERE chunk_id = %s
+LIMIT 1"""
+
 
 class RetrievalService:
     def __init__(self):
@@ -146,6 +156,43 @@ class RetrievalService:
                 }
                 for row in rows
             ]
+        except Exception:
+            self._db_conn = None
+            raise
+        finally:
+            cursor.close()
+
+    def get_video_metadata(self, video_id):
+        conn = self.get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(VIDEO_METADATA_SQL, (video_id,))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return {"source_s3_key": row[0], "speaker": row[1], "title": row[2]}
+        except Exception:
+            self._db_conn = None
+            raise
+        finally:
+            cursor.close()
+
+    def get_chunk_metadata(self, chunk_id):
+        conn = self.get_db_connection()
+        cursor = conn.cursor()
+        try:
+            cursor.execute(CHUNK_METADATA_SQL, (chunk_id,))
+            row = cursor.fetchone()
+            if row is None:
+                return None
+            return {
+                "source_s3_key": row[0],
+                "video_id": row[1],
+                "speaker": row[2],
+                "title": row[3],
+                "start_time": row[4],
+                "end_time": row[5],
+            }
         except Exception:
             self._db_conn = None
             raise

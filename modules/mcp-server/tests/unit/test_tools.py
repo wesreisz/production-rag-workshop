@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.config import get_settings
-from src.tools import ask_video_question, list_indexed_videos, search_by_speaker
+from src.tools import ask_video_question, list_indexed_videos, search_by_speaker, watch_video_segment
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +39,7 @@ class TestAskVideoQuestion:
         # Act
         with patch("src.tools.ApiClient") as mock_cls:
             mock_cls.return_value.ask = mock_ask
-            result = await ask_video_question("What is RAG?", top_k=5)
+            result = await ask_video_question.fn("What is RAG?", top_k=5)
 
         # Assert
         assert "What is RAG?" in result
@@ -50,7 +50,7 @@ class TestAskVideoQuestion:
     async def test_ask_video_question_empty_question_raises(self, valid_env):
         # Arrange / Act / Assert
         with pytest.raises(ValueError, match="cannot be empty"):
-            await ask_video_question("")
+            await ask_video_question.fn("")
 
 
 class TestListIndexedVideos:
@@ -62,7 +62,7 @@ class TestListIndexedVideos:
         # Act
         with patch("src.tools.ApiClient") as mock_cls:
             mock_cls.return_value.list_videos = mock_list
-            result = await list_indexed_videos()
+            result = await list_indexed_videos.fn()
 
         # Assert
         assert "| hello-my_name_is_wes |" in result
@@ -78,7 +78,78 @@ class TestSearchBySpeaker:
         # Act
         with patch("src.tools.ApiClient") as mock_cls:
             mock_cls.return_value.ask = mock_ask
-            await search_by_speaker("Jane Doe", "What is RAG?")
+            await search_by_speaker.fn("Jane Doe", "What is RAG?")
 
         # Assert
         mock_ask.assert_called_once_with("What is RAG?", 5, speaker="Jane Doe")
+
+
+SAMPLE_PRESIGN_RESPONSE = {
+    "presigned_url": "https://example.s3.amazonaws.com/uploads/hello-my_name_is_wes.mp3?X-Amz-Signature=abc",
+    "video_id": "hello-my_name_is_wes",
+    "expires_in": 3600,
+    "source_s3_key": "uploads/hello-my_name_is_wes.mp3",
+    "speaker": "Wesley Reisz",
+    "title": "Building RAG Systems",
+}
+
+
+class TestWatchVideoSegment:
+    @pytest.mark.asyncio
+    async def test_watch_video_segment_opens_browser(self, valid_env):
+        # Arrange
+        mock_presign = AsyncMock(return_value=SAMPLE_PRESIGN_RESPONSE)
+
+        # Act
+        with patch("src.tools.ApiClient") as mock_cls, \
+             patch("src.tools.webbrowser.open") as mock_browser:
+            mock_cls.return_value.presign = mock_presign
+            await watch_video_segment.fn("hello-my_name_is_wes", 234.5)
+
+        # Assert
+        called_url = mock_browser.call_args[0][0]
+        assert "#t=234.5" in called_url
+        assert "https://example.s3.amazonaws.com" in called_url
+
+    @pytest.mark.asyncio
+    async def test_watch_video_segment_no_start_time(self, valid_env):
+        # Arrange
+        mock_presign = AsyncMock(return_value=SAMPLE_PRESIGN_RESPONSE)
+
+        # Act
+        with patch("src.tools.ApiClient") as mock_cls, \
+             patch("src.tools.webbrowser.open") as mock_browser:
+            mock_cls.return_value.presign = mock_presign
+            await watch_video_segment.fn("hello-my_name_is_wes", 0)
+
+        # Assert
+        called_url = mock_browser.call_args[0][0]
+        assert "#t=" not in called_url
+
+    @pytest.mark.asyncio
+    async def test_watch_video_segment_returns_confirmation(self, valid_env):
+        # Arrange
+        mock_presign = AsyncMock(return_value=SAMPLE_PRESIGN_RESPONSE)
+
+        # Act
+        with patch("src.tools.ApiClient") as mock_cls, \
+             patch("src.tools.webbrowser.open"):
+            mock_cls.return_value.presign = mock_presign
+            result = await watch_video_segment.fn("hello-my_name_is_wes", 234.5)
+
+        # Assert
+        assert "Building RAG Systems" in result
+        assert "Wesley Reisz" in result
+        assert "3:54" in result
+
+    @pytest.mark.asyncio
+    async def test_watch_video_segment_empty_video_id_raises(self, valid_env):
+        # Arrange / Act / Assert
+        with pytest.raises(ValueError, match="Video ID cannot be empty"):
+            await watch_video_segment.fn("")
+
+    @pytest.mark.asyncio
+    async def test_watch_video_segment_negative_start_time_raises(self, valid_env):
+        # Arrange / Act / Assert
+        with pytest.raises(ValueError, match="Start time must be non-negative"):
+            await watch_video_segment.fn("hello-my_name_is_wes", -1)

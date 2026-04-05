@@ -127,6 +127,59 @@ class TestListVideos:
         )
 
 
+class TestPresign:
+    @pytest.mark.asyncio
+    async def test_presign_sends_correct_request(self, valid_env):
+        # Arrange
+        mock_client = _make_mock_client({"presigned_url": "https://example.com/video.mp3"})
+        ctx, _ = _patch_httpx(mock_client)
+
+        # Act
+        with ctx:
+            client = ApiClient()
+            await client.presign("v1")
+
+        # Assert
+        mock_client.get.assert_called_once_with(
+            "/videos/v1/presign",
+            headers={"x-api-key": "test-api-key-12345"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_presign_with_chunk_id(self, valid_env):
+        # Arrange
+        mock_client = _make_mock_client({"presigned_url": "https://example.com/video.mp3"})
+        ctx, _ = _patch_httpx(mock_client)
+
+        # Act
+        with ctx:
+            client = ApiClient()
+            await client.presign("v1", chunk_id="v1-chunk-001")
+
+        # Assert
+        mock_client.get.assert_called_once_with(
+            "/videos/v1/presign?chunk_id=v1-chunk-001",
+            headers={"x-api-key": "test-api-key-12345"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_presign_404_raises_runtime_error(self, valid_env):
+        # Arrange
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = httpx.HTTPStatusError(
+            "404", request=MagicMock(), response=mock_response
+        )
+        ctx, _ = _patch_httpx(mock_client)
+
+        # Act / Assert
+        with ctx:
+            client = ApiClient()
+            with pytest.raises(RuntimeError, match="video not found"):
+                await client.presign("nonexistent")
+
+
 class TestHealth:
     @pytest.mark.asyncio
     async def test_health_returns_status(self, valid_env):

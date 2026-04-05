@@ -52,6 +52,32 @@ class ApiClient:
         except httpx.RequestError as e:
             raise RuntimeError(f"Network error: {e}")
 
+    async def presign(self, video_id: str, chunk_id: str | None = None) -> dict:
+        path = f"/videos/{video_id}/presign"
+        if chunk_id:
+            path += f"?chunk_id={chunk_id}"
+        try:
+            async with httpx.AsyncClient(
+                timeout=30.0, base_url=self.settings.api_endpoint
+            ) as client:
+                response = await client.get(
+                    path, headers={"x-api-key": self.settings.api_key}
+                )
+                response.raise_for_status()
+                return response.json()
+        except httpx.TimeoutException:
+            raise RuntimeError("Request timed out")
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 401:
+                raise RuntimeError("Authentication failed: invalid API key")
+            if e.response.status_code == 404:
+                raise RuntimeError("video not found")
+            if e.response.status_code == 400:
+                raise RuntimeError("Invalid request")
+            raise RuntimeError(f"API error: {e.response.status_code}")
+        except httpx.RequestError as e:
+            raise RuntimeError(f"Network error: {e}")
+
     async def health(self) -> dict:
         try:
             async with httpx.AsyncClient(
