@@ -4,7 +4,7 @@ output "cluster_endpoint" {
 }
 
 output "cluster_port" {
-  description = "Aurora cluster port (5432)"
+  description = "Aurora cluster port"
   value       = aws_rds_cluster.this.port
 }
 

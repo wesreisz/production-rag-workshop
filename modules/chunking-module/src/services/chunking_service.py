@@ -8,204 +8,142 @@ logger = get_logger(__name__)
 
 TARGET_CHUNK_WORDS = 500
 OVERLAP_WORDS = 50
-SENTENCE_ENDINGS = frozenset((".", "!", "?"))
 
 
 class ChunkingService:
-    def __init__(self) -> None:
-        self._s3 = boto3.client("s3")
-        self._sqs = boto3.client("sqs")
+    def __init__(self, s3_client=None, sqs_client=None):
+        self.s3_client = s3_client or boto3.client("s3")
+        self.sqs_client = sqs_client or boto3.client("sqs")
 
-    def read_transcript(self, bucket: str, key: str) -> dict:
-        response = self._s3.get_object(Bucket=bucket, Key=key)
+    def read_transcript(self, bucket, key):
+        response = self.s3_client.get_object(Bucket=bucket, Key=key)
         return json.loads(response["Body"].read())
 
-    def parse_timed_words(self, transcript: dict) -> list[dict]:
-        items = transcript["results"]["items"]
-        timed_words: list[dict] = []
-
-        for item in items:
-            content = item["alternatives"][0]["content"]
+    def parse_timed_words(self, transcript):
+        timed_words = []
+        for item in transcript["results"]["items"]:
+            alt = item["alternatives"][0]
             if item["type"] == "pronunciation":
                 timed_words.append({
-                    "text": content,
+                    "text": alt["content"],
                     "start_time": float(item["start_time"]),
                     "end_time": float(item["end_time"]),
                 })
             elif item["type"] == "punctuation" and timed_words:
-                timed_words[-1]["text"] += content
-
+                timed_words[-1]["text"] += alt["content"]
         return timed_words
 
-    def build_sentences(self, timed_words: list[dict]) -> list[dict]:
+    def build_sentences(self, timed_words):
         if not timed_words:
             return []
 
-        sentences: list[dict] = []
-        current_words: list[dict] = []
+        sentences = []
+        current_words = []
 
         for word in timed_words:
             current_words.append(word)
-            if word["text"][-1] in SENTENCE_ENDINGS:
-                sentences.append(self._finalize_sentence(current_words))
+            if word["text"].endswith((".", "!", "?")):
+                sentences.append({
+                    "text": " ".join(w["text"] for w in current_words),
+                    "start_time": current_words[0]["start_time"],
+                    "end_time": current_words[-1]["end_time"],
+                    "word_count": len(current_words),
+                })
                 current_words = []
 
         if current_words:
-            sentences.append(self._finalize_sentence(current_words))
+            sentences.append({
+                "text": " ".join(w["text"] for w in current_words),
+                "start_time": current_words[0]["start_time"],
+                "end_time": current_words[-1]["end_time"],
+                "word_count": len(current_words),
+            })
 
         return sentences
 
-    def _finalize_sentence(self, words: list[dict]) -> dict:
-        return {
-            "text": " ".join(w["text"] for w in words),
-            "start_time": words[0]["start_time"],
-            "end_time": words[-1]["end_time"],
-            "word_count": len(words),
-            "words": list(words),
-        }
-
-    def chunk(
-        self,
-        timed_words: list[dict],
-        video_id: str,
-        source_key: str,
-        speaker: str | None = None,
-        title: str | None = None,
-    ) -> list[dict]:
+    def chunk(self, timed_words, video_id, source_key, speaker, title):
         sentences = self.build_sentences(timed_words)
         if not sentences:
             return []
 
-        chunks: list[dict] = []
-        current_sentences: list[dict] = []
+        raw_chunks = []
+        current_sentences = []
         current_word_count = 0
-        prev_chunk_sentences: list[dict] = []
-        sequence = 1
 
         for sentence in sentences:
-            if (
-                current_word_count + sentence["word_count"] > TARGET_CHUNK_WORDS
-                and current_sentences
-            ):
-                chunks.append(
-                    self._build_chunk_dict(
-                        current_sentences, sequence, video_id, source_key,
-                        speaker, title,
-                    )
-                )
-                sequence += 1
-                prev_chunk_sentences = list(current_sentences)
+            if (current_word_count + sentence["word_count"] > TARGET_CHUNK_WORDS
+                    and current_sentences):
+                raw_chunks.append(current_sentences)
+                overlap_sentences = self._get_overlap_sentences(current_sentences)
+                current_sentences = list(overlap_sentences)
+                current_word_count = sum(s["word_count"] for s in current_sentences)
 
-                overlap_sentences = self._get_overlap_sentences(prev_chunk_sentences)
-                overlap_word_count = sum(s["word_count"] for s in overlap_sentences)
-
-                current_sentences = overlap_sentences + [sentence]
-                current_word_count = overlap_word_count + sentence["word_count"]
-            else:
-                current_sentences.append(sentence)
-                current_word_count += sentence["word_count"]
+            current_sentences.append(sentence)
+            current_word_count += sentence["word_count"]
 
         if current_sentences:
-            chunks.append(
-                self._build_chunk_dict(
-                    current_sentences, sequence, video_id, source_key,
-                    speaker, title,
-                )
-            )
+            raw_chunks.append(current_sentences)
 
-        for c in chunks:
-            c["metadata"]["total_chunks"] = len(chunks)
+        total_chunks = len(raw_chunks)
+        chunks = []
+        for i, chunk_sentences in enumerate(raw_chunks, start=1):
+            text = " ".join(s["text"] for s in chunk_sentences)
+            word_count = sum(s["word_count"] for s in chunk_sentences)
+            chunks.append({
+                "chunk_id": f"{video_id}-chunk-{i:03d}",
+                "video_id": video_id,
+                "sequence": i,
+                "text": text,
+                "word_count": word_count,
+                "start_time": chunk_sentences[0]["start_time"],
+                "end_time": chunk_sentences[-1]["end_time"],
+                "metadata": {
+                    "speaker": speaker,
+                    "title": title,
+                    "source_s3_key": source_key,
+                    "total_chunks": total_chunks,
+                },
+            })
 
         return chunks
 
-    def _get_overlap_sentences(self, sentences: list[dict]) -> list[dict]:
-        overlap: list[dict] = []
+    def _get_overlap_sentences(self, sentences):
+        overlap = []
         word_count = 0
-
         for sentence in reversed(sentences):
-            if word_count + sentence["word_count"] > OVERLAP_WORDS and overlap:
-                break
             overlap.insert(0, sentence)
             word_count += sentence["word_count"]
-
+            if word_count >= OVERLAP_WORDS:
+                break
         return overlap
 
-    def _build_chunk_dict(
-        self,
-        sentences: list[dict],
-        sequence: int,
-        video_id: str,
-        source_key: str,
-        speaker: str | None = None,
-        title: str | None = None,
-    ) -> dict:
-        return {
-            "chunk_id": f"{video_id}-chunk-{sequence:03d}",
-            "video_id": video_id,
-            "sequence": sequence,
-            "text": " ".join(s["text"] for s in sentences),
-            "word_count": sum(s["word_count"] for s in sentences),
-            "start_time": sentences[0]["start_time"],
-            "end_time": sentences[-1]["end_time"],
-            "metadata": {
-                "source_s3_key": source_key,
-                "total_chunks": 0,
-                "speaker": speaker,
-                "title": title,
-            },
-        }
-
-    def store_chunks(
-        self, bucket: str, video_id: str, chunks: list[dict]
-    ) -> list[str]:
-        keys: list[str] = []
-
+    def store_chunks(self, bucket, video_id, chunks):
+        keys = []
         for chunk in chunks:
             key = f"chunks/{video_id}/chunk-{chunk['sequence']:03d}.json"
-            self._s3.put_object(
+            self.s3_client.put_object(
                 Bucket=bucket,
                 Key=key,
                 Body=json.dumps(chunk),
                 ContentType="application/json",
             )
             keys.append(key)
-
-        logger.info(
-            "stored %d chunks for video %s in s3://%s/chunks/%s/",
-            len(chunks),
-            video_id,
-            bucket,
-            video_id,
-        )
-
         return keys
 
-    def publish_chunks(
-        self,
-        queue_url: str,
-        chunk_keys: list[str],
-        bucket: str,
-        video_id: str,
-        speaker: str | None = None,
-        title: str | None = None,
-    ) -> int:
+    def publish_chunks(self, queue_url, chunk_keys, bucket, video_id, speaker, title):
         for key in chunk_keys:
-            self._sqs.send_message(
+            message_body = json.dumps({
+                "chunk_s3_key": key,
+                "bucket": bucket,
+                "video_id": video_id,
+                "speaker": speaker,
+                "title": title,
+            })
+            self.sqs_client.send_message(
                 QueueUrl=queue_url,
-                MessageBody=json.dumps({
-                    "chunk_s3_key": key,
-                    "bucket": bucket,
-                    "video_id": video_id,
-                    "speaker": speaker,
-                    "title": title,
-                }),
+                MessageBody=message_body,
             )
-
-        logger.info(
-            "published %d chunk messages for video %s to %s",
-            len(chunk_keys),
-            video_id,
-            queue_url,
-        )
-
         return len(chunk_keys)
+
+
+service = ChunkingService()

@@ -1,33 +1,38 @@
 variable "project_name" {
-  type = string
-}
-
-variable "state_machine_definition" {
+  description = "Project name used to derive all resource names"
   type        = string
-  description = "JSON-encoded state machine definition"
 }
 
-variable "lambda_arns" {
-  type        = list(string)
-  description = "Lambda ARNs the state machine is allowed to invoke"
-}
-
-variable "s3_bucket_name" {
+variable "definition" {
+  description = "State machine definition JSON"
   type        = string
-  description = "S3 bucket name for the EventBridge upload trigger"
 }
 
-variable "s3_key_prefix" {
-  type    = string
-  default = "uploads/"
+variable "source_bucket_name" {
+  description = "S3 bucket name for EventBridge event pattern"
+  type        = string
 }
 
-variable "log_retention_days" {
-  type    = number
-  default = 14
+variable "object_key_prefix" {
+  description = "S3 object key prefix for EventBridge event pattern"
+  type        = string
+  default     = "uploads/"
+}
+
+variable "additional_policy_json" {
+  description = "Additional IAM policy JSON to attach to the execution role"
+  type        = string
+  default     = null
+}
+
+variable "enable_additional_policy" {
+  description = "Whether to attach the additional IAM policy"
+  type        = bool
+  default     = false
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Resource tags"
+  type        = map(string)
+  default     = {}
 }

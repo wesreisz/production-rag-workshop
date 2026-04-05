@@ -1,386 +1,406 @@
+import io
 import json
-from io import BytesIO
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-
-@pytest.fixture
-def fake_embedding():
-    return [0.01 * i for i in range(256)]
+from src.services.retrieval_service import RetrievalService
+from src.handlers.question import handler
 
 
-@pytest.fixture
-def fake_db_rows():
-    return [
-        (
-            "vid1-chunk-001", "vid1", "Text about error handling", "Jane Doe",
-            "Building RAG", 10.0, 45.2, "uploads/vid1.mp3", 0.92,
-        ),
-        (
-            "vid1-chunk-002", "vid1", "Another chunk about testing", "Jane Doe",
-            "Building RAG", 50.0, 90.1, "uploads/vid1.mp3", 0.85,
-        ),
-        (
-            "vid1-chunk-003", "vid1", "Low relevance chunk", "Jane Doe",
-            "Building RAG", 100.0, 130.0, "uploads/vid1.mp3", 0.30,
-        ),
-    ]
+def _make_bedrock_response(vector):
+    body_bytes = json.dumps({"embedding": vector}).encode()
+    return {"body": io.BytesIO(body_bytes)}
+
+
+def _make_cursor(rows):
+    cursor = MagicMock()
+    cursor.fetchall.return_value = rows
+    return cursor
+
+
+def _make_fetchone_cursor(row):
+    cursor = MagicMock()
+    cursor.fetchone.return_value = row
+    return cursor
+
+
+def _make_conn(cursor):
+    conn = MagicMock()
+    conn.closed = False
+    conn.cursor.return_value = cursor
+    return conn
+
+
+SAMPLE_ROW = (
+    "hello-my_name_is_wes-chunk-001",
+    "hello-my_name_is_wes",
+    "RAG stands for retrieval augmented generation.",
+    "Jane Doe",
+    "Building RAG Systems",
+    0.0,
+    45.2,
+    "uploads/hello-my_name_is_wes.mp3",
+    0.89,
+)
 
 
 class TestGenerateEmbedding:
-    def test_generate_embedding_returns_vector(self, aws_credentials, fake_embedding):
+    def test_generate_embedding_returns_vector(self):
         # Arrange
-        response_body = json.dumps({"embedding": fake_embedding})
-        mock_bedrock = MagicMock()
-        mock_bedrock.invoke_model.return_value = {
-            "body": BytesIO(response_body.encode()),
-        }
+        expected_vector = [0.01 * i for i in range(256)]
+        svc = RetrievalService()
+        svc._bedrock = MagicMock()
+        svc._bedrock.invoke_model.return_value = _make_bedrock_response(expected_vector)
 
-        with patch("src.services.retrieval_service.boto3") as mock_boto3:
-            mock_boto3.client.side_effect = lambda svc: (
-                mock_bedrock if svc == "bedrock-runtime" else MagicMock()
-            )
-            from src.services.retrieval_service import RetrievalService
-            service = RetrievalService()
-            service._bedrock = mock_bedrock
+        # Act
+        result = svc.generate_embedding("What is RAG?")
 
-            # Act
-            result = service.generate_embedding("What is RAG?")
+        # Assert
+        assert result == expected_vector
+        assert len(result) == 256
 
-            # Assert
-            assert isinstance(result, list)
-            assert len(result) == 256
-
-    def test_generate_embedding_passes_correct_params(self, aws_credentials, fake_embedding):
+    def test_generate_embedding_passes_correct_params(self):
         # Arrange
-        response_body = json.dumps({"embedding": fake_embedding})
-        mock_bedrock = MagicMock()
-        mock_bedrock.invoke_model.return_value = {
-            "body": BytesIO(response_body.encode()),
-        }
+        vector = [0.0] * 256
+        svc = RetrievalService()
+        svc._bedrock = MagicMock()
+        svc._bedrock.invoke_model.return_value = _make_bedrock_response(vector)
+        svc._dimensions = 256
 
-        with patch("src.services.retrieval_service.boto3") as mock_boto3:
-            mock_boto3.client.side_effect = lambda svc: (
-                mock_bedrock if svc == "bedrock-runtime" else MagicMock()
-            )
-            from src.services.retrieval_service import RetrievalService
-            service = RetrievalService()
-            service._bedrock = mock_bedrock
+        # Act
+        svc.generate_embedding("What is RAG?")
 
-            # Act
-            service.generate_embedding("What is RAG?")
-
-            # Assert
-            call_args = mock_bedrock.invoke_model.call_args
-            assert call_args.kwargs["modelId"] == "amazon.titan-embed-text-v2:0"
-            body = json.loads(call_args.kwargs["body"])
-            assert body["inputText"] == "What is RAG?"
-            assert body["dimensions"] == 256
-            assert body["normalize"] is True
+        # Assert
+        call_kwargs = svc._bedrock.invoke_model.call_args[1]
+        assert call_kwargs["modelId"] == "amazon.titan-embed-text-v2:0"
+        request_body = json.loads(call_kwargs["body"])
+        assert request_body["dimensions"] == 256
+        assert request_body["normalize"] is True
+        assert request_body["inputText"] == "What is RAG?"
 
 
 class TestSearchSimilar:
-    def test_search_similar_returns_ranked_results(self, aws_credentials, fake_db_rows):
+    def test_search_similar_returns_ranked_results(self):
         # Arrange
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = fake_db_rows
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_conn.closed = 0
+        svc = RetrievalService()
+        cursor = _make_cursor([SAMPLE_ROW])
+        svc._db_conn = _make_conn(cursor)
+        embedding = [0.01] * 256
 
-        with patch("src.services.retrieval_service.boto3") as mock_boto3:
-            mock_boto3.client.side_effect = lambda svc: MagicMock()
-            from src.services.retrieval_service import RetrievalService
-            service = RetrievalService()
-            service._db_conn = mock_conn
+        # Act
+        results = svc.search_similar(embedding, top_k=5)
 
-            embedding = [0.01] * 256
+        # Assert
+        assert len(results) == 1
+        assert results[0]["chunk_id"] == "hello-my_name_is_wes-chunk-001"
+        assert results[0]["similarity"] == 0.89
 
-            # Act
-            results = service.search_similar(embedding, top_k=5)
-
-            # Assert
-            assert isinstance(results, list)
-            assert len(results) == 3
-            assert results[0]["chunk_id"] == "vid1-chunk-001"
-            assert results[0]["similarity"] == 0.92
-
-    def test_search_similar_with_speaker_filter(self, aws_credentials, fake_db_rows):
+    def test_search_similar_with_speaker_filter(self):
         # Arrange
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = fake_db_rows[:1]
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_conn.closed = 0
+        svc = RetrievalService()
+        cursor = _make_cursor([SAMPLE_ROW])
+        svc._db_conn = _make_conn(cursor)
+        embedding = [0.01] * 256
 
-        with patch("src.services.retrieval_service.boto3") as mock_boto3:
-            mock_boto3.client.side_effect = lambda svc: MagicMock()
-            from src.services.retrieval_service import RetrievalService
-            service = RetrievalService()
-            service._db_conn = mock_conn
+        # Act
+        svc.search_similar(embedding, top_k=5, speaker="Jane Doe")
 
-            embedding = [0.01] * 256
+        # Assert
+        executed_sql = cursor.execute.call_args[0][0]
+        assert "WHERE speaker" in executed_sql
 
-            # Act
-            service.search_similar(embedding, top_k=5, speaker="Jane Doe")
-
-            # Assert
-            executed_sql = mock_cursor.execute.call_args[0][0]
-            assert "WHERE speaker = %s" in executed_sql
-
-    def test_search_similar_without_filter(self, aws_credentials, fake_db_rows):
+    def test_search_similar_without_filter(self):
         # Arrange
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = fake_db_rows
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_conn.closed = 0
+        svc = RetrievalService()
+        cursor = _make_cursor([SAMPLE_ROW])
+        svc._db_conn = _make_conn(cursor)
+        embedding = [0.01] * 256
 
-        with patch("src.services.retrieval_service.boto3") as mock_boto3:
-            mock_boto3.client.side_effect = lambda svc: MagicMock()
-            from src.services.retrieval_service import RetrievalService
-            service = RetrievalService()
-            service._db_conn = mock_conn
+        # Act
+        svc.search_similar(embedding, top_k=5)
 
-            embedding = [0.01] * 256
+        # Assert
+        executed_sql = cursor.execute.call_args[0][0]
+        assert "WHERE" not in executed_sql
 
-            # Act
-            service.search_similar(embedding, top_k=5)
-
-            # Assert
-            executed_sql = mock_cursor.execute.call_args[0][0]
-            assert "WHERE" not in executed_sql
-
-    def test_search_similar_filters_below_threshold(self, aws_credentials, fake_db_rows):
+    def test_search_similar_filters_below_threshold(self):
         # Arrange
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = fake_db_rows
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_conn.closed = 0
+        low_similarity_row = SAMPLE_ROW[:8] + (0.3,)
+        high_similarity_row = SAMPLE_ROW[:8] + (0.9,)
+        svc = RetrievalService()
+        cursor = _make_cursor([low_similarity_row, high_similarity_row])
+        svc._db_conn = _make_conn(cursor)
+        embedding = [0.01] * 256
 
-        with patch("src.services.retrieval_service.boto3") as mock_boto3:
-            mock_boto3.client.side_effect = lambda svc: MagicMock()
-            from src.services.retrieval_service import RetrievalService
-            service = RetrievalService()
-            service._db_conn = mock_conn
+        # Act
+        results = svc.search_similar(embedding, top_k=5, similarity_threshold=0.5)
 
-            embedding = [0.01] * 256
+        # Assert
+        assert len(results) == 1
+        assert results[0]["similarity"] == 0.9
 
-            # Act
-            results = service.search_similar(
-                embedding, top_k=5, similarity_threshold=0.5,
-            )
-
-            # Assert
-            assert len(results) == 2
-            assert all(r["similarity"] >= 0.5 for r in results)
-
-    def test_search_similar_with_video_id_filter(self, aws_credentials, fake_db_rows):
+    def test_search_similar_with_video_id_filter(self):
         # Arrange
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = fake_db_rows[:1]
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_conn.closed = 0
+        svc = RetrievalService()
+        cursor = _make_cursor([SAMPLE_ROW])
+        svc._db_conn = _make_conn(cursor)
+        embedding = [0.01] * 256
 
-        with patch("src.services.retrieval_service.boto3") as mock_boto3:
-            mock_boto3.client.side_effect = lambda svc: MagicMock()
-            from src.services.retrieval_service import RetrievalService
-            service = RetrievalService()
-            service._db_conn = mock_conn
+        # Act
+        svc.search_similar(embedding, top_k=5, video_id="hello-my_name_is_wes")
 
-            embedding = [0.01] * 256
-
-            # Act
-            service.search_similar(embedding, top_k=5, video_id="vid1")
-
-            # Assert
-            executed_sql = mock_cursor.execute.call_args[0][0]
-            assert "WHERE video_id = %s" in executed_sql
+        # Assert
+        executed_sql = cursor.execute.call_args[0][0]
+        assert "WHERE video_id" in executed_sql
 
 
 class TestListVideos:
-    def test_list_videos_returns_aggregated(self, aws_credentials):
+    def test_list_videos_returns_aggregated(self):
         # Arrange
-        mock_cursor = MagicMock()
-        mock_cursor.fetchall.return_value = [
-            ("vid1", "Jane Doe", "Building RAG", 3),
-            ("vid2", "John Smith", "Intro to AI", 5),
-        ]
-        mock_conn = MagicMock()
-        mock_conn.cursor.return_value = mock_cursor
-        mock_conn.closed = 0
+        video_row = ("hello-my_name_is_wes", "Jane Doe", "Building RAG Systems", 3)
+        svc = RetrievalService()
+        cursor = _make_cursor([video_row])
+        svc._db_conn = _make_conn(cursor)
 
-        with patch("src.services.retrieval_service.boto3") as mock_boto3:
-            mock_boto3.client.side_effect = lambda svc: MagicMock()
-            from src.services.retrieval_service import RetrievalService
-            service = RetrievalService()
-            service._db_conn = mock_conn
+        # Act
+        results = svc.list_videos()
 
-            # Act
-            results = service.list_videos()
+        # Assert
+        assert len(results) == 1
+        assert results[0]["video_id"] == "hello-my_name_is_wes"
+        assert results[0]["speaker"] == "Jane Doe"
+        assert results[0]["title"] == "Building RAG Systems"
+        assert results[0]["chunk_count"] == 3
 
-            # Assert
-            assert len(results) == 2
-            assert results[0]["video_id"] == "vid1"
-            assert results[0]["chunk_count"] == 3
-            assert results[1]["video_id"] == "vid2"
+
+class TestGetVideoMetadata:
+    def test_get_video_metadata_returns_dict(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_fetchone_cursor(("uploads/hello-my_name_is_wes.mp3", "Wesley Reisz", "Building RAG Systems"))
+        svc._db_conn = _make_conn(cursor)
+
+        # Act
+        result = svc.get_video_metadata("hello-my_name_is_wes")
+
+        # Assert
+        assert result["source_s3_key"] == "uploads/hello-my_name_is_wes.mp3"
+        assert result["speaker"] == "Wesley Reisz"
+        assert result["title"] == "Building RAG Systems"
+
+    def test_get_video_metadata_not_found(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_fetchone_cursor(None)
+        svc._db_conn = _make_conn(cursor)
+
+        # Act
+        result = svc.get_video_metadata("nonexistent")
+
+        # Assert
+        assert result is None
+
+
+class TestGetChunkMetadata:
+    def test_get_chunk_metadata_returns_dict(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_fetchone_cursor((
+            "uploads/hello-my_name_is_wes.mp3",
+            "hello-my_name_is_wes",
+            "Wesley Reisz",
+            "Building RAG Systems",
+            234.5,
+            279.8,
+        ))
+        svc._db_conn = _make_conn(cursor)
+
+        # Act
+        result = svc.get_chunk_metadata("hello-my_name_is_wes-chunk-001")
+
+        # Assert
+        assert result["source_s3_key"] == "uploads/hello-my_name_is_wes.mp3"
+        assert result["video_id"] == "hello-my_name_is_wes"
+        assert result["speaker"] == "Wesley Reisz"
+        assert result["title"] == "Building RAG Systems"
+        assert result["start_time"] == 234.5
+        assert result["end_time"] == 279.8
+
+    def test_get_chunk_metadata_not_found(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_fetchone_cursor(None)
+        svc._db_conn = _make_conn(cursor)
+
+        # Act
+        result = svc.get_chunk_metadata("nonexistent-chunk")
+
+        # Assert
+        assert result is None
 
 
 class TestHandler:
-    def test_handler_post_ask_returns_results(
-        self, aws_credentials, sample_ask_event, fake_embedding,
-    ):
+    def test_handler_post_ask_returns_results(self, aws_credentials, sample_ask_event):
         # Arrange
-        mock_results = [
-            {
-                "chunk_id": "vid1-chunk-001",
-                "video_id": "vid1",
-                "text": "Text about error handling",
-                "similarity": 0.92,
-                "speaker": "Jane Doe",
-                "title": "Building RAG",
-                "start_time": 10.0,
-                "end_time": 45.2,
-                "source_s3_key": "uploads/vid1.mp3",
-            }
-        ]
-
+        mock_results = [{"chunk_id": "c-001", "similarity": 0.89}]
         with patch("src.handlers.question.service") as mock_service:
-            mock_service.generate_embedding.return_value = fake_embedding
+            mock_service.generate_embedding.return_value = [0.01] * 256
             mock_service.search_similar.return_value = mock_results
-            from src.handlers.question import handler
 
             # Act
             response = handler(sample_ask_event, None)
 
-            # Assert
-            assert response["statusCode"] == 200
-            body = json.loads(response["body"])
-            assert body["question"] == "What is RAG?"
-            assert len(body["results"]) == 1
+        # Assert
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body["question"] == "What is RAG?"
+        assert body["results"] == mock_results
 
     def test_handler_post_ask_missing_question(self, aws_credentials):
         # Arrange
         event = {
             "resource": "/ask",
-            "path": "/ask",
             "httpMethod": "POST",
-            "headers": {"Content-Type": "application/json"},
             "body": json.dumps({"question": ""}),
-            "isBase64Encoded": False,
         }
 
-        with patch("src.handlers.question.service") as mock_service:
-            from src.handlers.question import handler
+        # Act
+        response = handler(event, None)
 
-            # Act
-            response = handler(event, None)
+        # Assert
+        assert response["statusCode"] == 400
+        assert json.loads(response["body"]) == {"error": "question is required"}
 
-            # Assert
-            assert response["statusCode"] == 400
-            body = json.loads(response["body"])
-            assert body["error"] == "question is required"
-
-    def test_handler_post_video_ask_returns_results(
-        self, aws_credentials, sample_video_ask_event, fake_embedding,
-    ):
+    def test_handler_post_video_ask_returns_results(self, aws_credentials, sample_video_ask_event):
         # Arrange
-        mock_results = [
-            {
-                "chunk_id": "hello-my_name_is_wes-chunk-001",
-                "video_id": "hello-my_name_is_wes",
-                "text": "Text about error handling",
-                "similarity": 0.92,
-                "speaker": "Jane Doe",
-                "title": "Building RAG",
-                "start_time": 10.0,
-                "end_time": 45.2,
-                "source_s3_key": "uploads/hello-my_name_is_wes.mp3",
-            }
-        ]
-
+        mock_results = [{"chunk_id": "c-001", "similarity": 0.89}]
         with patch("src.handlers.question.service") as mock_service:
-            mock_service.generate_embedding.return_value = fake_embedding
+            mock_service.generate_embedding.return_value = [0.01] * 256
             mock_service.search_similar.return_value = mock_results
-            from src.handlers.question import handler
 
             # Act
             response = handler(sample_video_ask_event, None)
 
-            # Assert
-            assert response["statusCode"] == 200
-            body = json.loads(response["body"])
-            assert body["video_id"] == "hello-my_name_is_wes"
-            assert body["question"] == "What is this about?"
-            assert len(body["results"]) == 1
+        # Assert
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body["video_id"] == "hello-my_name_is_wes"
+        assert body["question"] == "What is RAG?"
+        assert body["results"] == mock_results
 
-    def test_handler_post_video_ask_passes_video_id(
-        self, aws_credentials, sample_video_ask_event, fake_embedding,
-    ):
+    def test_handler_post_video_ask_passes_video_id(self, aws_credentials, sample_video_ask_event):
         # Arrange
         with patch("src.handlers.question.service") as mock_service:
-            mock_service.generate_embedding.return_value = fake_embedding
+            mock_service.generate_embedding.return_value = [0.01] * 256
             mock_service.search_similar.return_value = []
-            from src.handlers.question import handler
 
             # Act
             handler(sample_video_ask_event, None)
 
-            # Assert
-            call_kwargs = mock_service.search_similar.call_args
-            assert call_kwargs.kwargs.get("video_id") == "hello-my_name_is_wes" or \
-                (len(call_kwargs.args) > 4 and call_kwargs.args[4] == "hello-my_name_is_wes")
+        # Assert
+        call_kwargs = mock_service.search_similar.call_args[1]
+        assert call_kwargs["video_id"] == "hello-my_name_is_wes"
 
-    def test_handler_get_health(self, aws_credentials, sample_health_event):
-        # Arrange
-        with patch("src.handlers.question.service"):
-            from src.handlers.question import handler
+    def test_handler_get_health(self, sample_health_event):
+        # Arrange / Act
+        response = handler(sample_health_event, None)
 
-            # Act
-            response = handler(sample_health_event, None)
-
-            # Assert
-            assert response["statusCode"] == 200
-            body = json.loads(response["body"])
-            assert body["status"] == "healthy"
+        # Assert
+        assert response["statusCode"] == 200
+        assert json.loads(response["body"]) == {"status": "healthy"}
 
     def test_handler_get_videos(self, aws_credentials, sample_videos_event):
         # Arrange
-        mock_videos = [
-            {"video_id": "vid1", "speaker": "Jane", "title": "RAG", "chunk_count": 3},
-        ]
-
+        mock_videos = [{"video_id": "v-001", "chunk_count": 3}]
         with patch("src.handlers.question.service") as mock_service:
             mock_service.list_videos.return_value = mock_videos
-            from src.handlers.question import handler
 
             # Act
             response = handler(sample_videos_event, None)
 
-            # Assert
-            assert response["statusCode"] == 200
-            body = json.loads(response["body"])
-            assert len(body["videos"]) == 1
+        # Assert
+        assert response["statusCode"] == 200
+        assert json.loads(response["body"]) == {"videos": mock_videos}
 
-    def test_handler_unknown_route(self, aws_credentials):
+    def test_handler_unknown_route(self):
         # Arrange
         event = {
             "resource": "/unknown",
-            "path": "/unknown",
             "httpMethod": "GET",
-            "headers": {},
             "body": None,
-            "isBase64Encoded": False,
         }
 
-        with patch("src.handlers.question.service"):
-            from src.handlers.question import handler
+        # Act
+        response = handler(event, None)
+
+        # Assert
+        assert response["statusCode"] == 404
+
+    def test_handler_presign_returns_url(self, aws_credentials, sample_presign_event):
+        # Arrange
+        fake_metadata = {"source_s3_key": "uploads/hello-my_name_is_wes.mp3", "speaker": "Wesley Reisz", "title": "Building RAG Systems"}
+        fake_url = "https://example.s3.amazonaws.com/uploads/hello-my_name_is_wes.mp3?X-Amz-Signature=abc"
+        with patch("src.handlers.question.service") as mock_service, \
+             patch("src.handlers.question.s3_client") as mock_s3:
+            mock_service.get_video_metadata.return_value = fake_metadata
+            mock_s3.generate_presigned_url.return_value = fake_url
 
             # Act
-            response = handler(event, None)
+            response = handler(sample_presign_event, None)
 
-            # Assert
-            assert response["statusCode"] == 404
+        # Assert
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body["presigned_url"] == fake_url
+        assert body["video_id"] == "hello-my_name_is_wes"
+        assert body["expires_in"] == 3600
+
+    def test_handler_presign_with_chunk_id(self, aws_credentials, sample_presign_with_chunk_event):
+        # Arrange
+        fake_metadata = {
+            "source_s3_key": "uploads/hello-my_name_is_wes.mp3",
+            "video_id": "hello-my_name_is_wes",
+            "speaker": "Wesley Reisz",
+            "title": "Building RAG Systems",
+            "start_time": 234.5,
+            "end_time": 279.8,
+        }
+        fake_url = "https://example.s3.amazonaws.com/uploads/hello-my_name_is_wes.mp3?X-Amz-Signature=abc"
+        with patch("src.handlers.question.service") as mock_service, \
+             patch("src.handlers.question.s3_client") as mock_s3:
+            mock_service.get_chunk_metadata.return_value = fake_metadata
+            mock_s3.generate_presigned_url.return_value = fake_url
+
+            # Act
+            response = handler(sample_presign_with_chunk_event, None)
+
+        # Assert
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body["start_time"] == 234.5
+        assert body["end_time"] == 279.8
+
+    def test_handler_presign_video_not_found(self, aws_credentials, sample_presign_event):
+        # Arrange
+        with patch("src.handlers.question.service") as mock_service:
+            mock_service.get_video_metadata.return_value = None
+
+            # Act
+            response = handler(sample_presign_event, None)
+
+        # Assert
+        assert response["statusCode"] == 404
+        assert json.loads(response["body"]) == {"error": "video not found"}
+
+    def test_handler_presign_chunk_not_found(self, aws_credentials, sample_presign_with_chunk_event):
+        # Arrange
+        with patch("src.handlers.question.service") as mock_service:
+            mock_service.get_chunk_metadata.return_value = None
+
+            # Act
+            response = handler(sample_presign_with_chunk_event, None)
+
+        # Assert
+        assert response["statusCode"] == 404
+        assert json.loads(response["body"]) == {"error": "chunk not found"}

@@ -1,65 +1,32 @@
-VIDEO_KNOWLEDGE_OVERVIEW = """# Video Knowledge Base
+VIDEO_KNOWLEDGE_OVERVIEW = """
+You have access to a video knowledge base containing indexed transcripts from conference talks and technical presentations.
 
-This MCP server connects to a video transcript knowledge base containing information from conference talks and presentations.
+Use the available tools to answer questions about video content:
+- Use `list_indexed_videos` first to discover what videos are available.
+- Use `ask_video_question` to search across all videos with a natural language question.
+- Use `search_by_speaker` when the user wants to find content from a specific speaker.
 
-The knowledge base includes:
+Results include the transcript text, similarity score, speaker name, video title, and timestamp range so you can cite specific moments in the video.
+""".strip()
 
-- **Transcript chunks**: Searchable text segments from video transcriptions
-- **Speaker metadata**: Who presented each talk
-- **Title metadata**: The title of each presentation
-- **Timestamps**: Start and end times for each chunk within the original video
+EXAMPLE_QUESTIONS = """
+Here are example questions you can ask about the video knowledge base:
 
-## Using the Knowledge Base
+- "What is retrieval-augmented generation?"
+- "How does pgvector work for similarity search?"
+- "What are the best practices for chunking documents?"
+- "What did the speakers say about embedding models?"
+- "What is the difference between RAG and fine-tuning?"
 
-You can query this knowledge base by asking natural language questions. The system embeds your question, performs cosine similarity search against stored transcript chunks, and returns the most relevant results ranked by similarity score.
+Try asking specific technical questions to get the most relevant transcript chunks.
+""".strip()
 
-Available tools:
-- **ask_video_question**: Ask any question about video content
-- **list_indexed_videos**: See all videos in the knowledge base
-- **search_by_speaker**: Search content from a specific speaker
-"""
+FORMATTING_GUIDANCE = """
+Tips for writing effective questions:
 
-EXAMPLE_QUESTIONS = """# Example Questions
-
-Here are examples of questions you can ask the video knowledge base:
-
-## Speaker-Focused
-- "What did Wesley Reisz talk about?"
-- "What topics did [Speaker Name] cover?"
-- "Who spoke about RAG pipelines?"
-
-## Topic-Focused
-- "What was discussed about error handling?"
-- "What sessions covered vector databases?"
-- "Tell me about embedding strategies mentioned in the talks"
-
-## General
-- "What were the main themes across all talks?"
-- "What best practices were recommended?"
-- "What tools and technologies were mentioned?"
-
-## Specific
-- "What examples were given for chunking strategies?"
-- "What were the key takeaways about production systems?"
-
-Feel free to ask follow-up questions to dive deeper into any topic.
-"""
-
-FORMATTING_GUIDANCE = """# Tips for Better Questions
-
-## Do's
-- **Be specific**: Mention speaker names, topics, or concepts when you know them
-- **Ask one thing at a time**: Focused questions get more targeted answers
-- **Use natural language**: Write questions as you would ask a colleague
-- **Ask for details**: Request examples, best practices, or specific insights
-
-## Don'ts
-- Avoid overly broad questions like "Tell me everything"
-- Don't combine multiple unrelated questions in one query
-- Skip jargon about the query system itself
-
-## Getting Better Results
-The more specific your question, the more targeted the answer. If you get a broad response, try narrowing to a specific speaker, topic, or aspect.
-"""
-
-__all__ = ["VIDEO_KNOWLEDGE_OVERVIEW", "EXAMPLE_QUESTIONS", "FORMATTING_GUIDANCE"]
+- Be specific: "How does Aurora pgvector handle cosine similarity?" gets better results than "tell me about databases".
+- Include domain terms: use technical vocabulary from the topic area.
+- For speaker-specific queries, use `search_by_speaker` with the exact speaker name from `list_indexed_videos`.
+- Adjust `top_k` (default 5) to get more or fewer results — use a higher value for broad topics.
+- Combine results from multiple queries to build a comprehensive answer.
+""".strip()

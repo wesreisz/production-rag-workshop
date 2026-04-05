@@ -1,46 +1,55 @@
-import time
-from pathlib import PurePosixPath
+import os
 
 import boto3
-from botocore.config import Config
 
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
 
-RETRY_CONFIG = Config(retries={"max_attempts": 3, "mode": "adaptive"})
 SUPPORTED_FORMATS = {"mp3", "mp4", "wav", "flac", "ogg", "amr", "webm"}
 
 
 class TranscribeService:
-    def __init__(self) -> None:
-        self._client = boto3.client("transcribe", config=RETRY_CONFIG)
-        self._s3 = boto3.client("s3")
+    def __init__(self, transcribe_client=None, s3_client=None):
+        self.transcribe_client = transcribe_client or boto3.client("transcribe")
+        self.s3_client = s3_client or boto3.client("s3")
 
-    def get_object_metadata(self, bucket: str, key: str) -> dict:
-        response = self._s3.head_object(Bucket=bucket, Key=key)
+    def get_upload_metadata(self, bucket, key):
+        response = self.s3_client.head_object(Bucket=bucket, Key=key)
         metadata = response.get("Metadata", {})
         return {
             "speaker": metadata.get("speaker"),
             "title": metadata.get("title"),
         }
 
-    def derive_video_id(self, s3_key: str) -> str:
-        filename = s3_key.removeprefix("uploads/")
-        return PurePosixPath(filename).stem
+    @staticmethod
+    def derive_video_id(s3_key):
+        filename = s3_key.replace("uploads/", "", 1)
+        video_id, _ = os.path.splitext(filename)
+        return video_id
 
-    def detect_media_format(self, s3_key: str) -> str:
-        extension = PurePosixPath(s3_key).suffix.lstrip(".")
-        if extension not in SUPPORTED_FORMATS:
-            raise ValueError(f"Unsupported media format: {extension}")
-        return extension
+    @staticmethod
+    def detect_media_format(s3_key):
+        _, ext = os.path.splitext(s3_key)
+        media_format = ext.lstrip(".")
+        if media_format not in SUPPORTED_FORMATS:
+            raise ValueError(
+                f"Unsupported media format: {media_format}. "
+                f"Supported: {', '.join(sorted(SUPPORTED_FORMATS))}"
+            )
+        return media_format
 
-    def start_job(self, bucket: str, key: str, video_id: str) -> dict[str, str]:
+    def start_job(self, bucket, key, video_id):
         media_format = self.detect_media_format(key)
-        job_name = f"production-rag-{video_id}-{int(time.time())}"
+        job_name = f"production-rag-{video_id}"
         transcript_key = f"transcripts/{video_id}/raw.json"
 
-        self._client.start_transcription_job(
+        logger.info(
+            "Starting transcription job %s for s3://%s/%s",
+            job_name, bucket, key,
+        )
+
+        self.transcribe_client.start_transcription_job(
             TranscriptionJobName=job_name,
             Media={"MediaFileUri": f"s3://{bucket}/{key}"},
             MediaFormat=media_format,
@@ -49,25 +58,21 @@ class TranscribeService:
             OutputKey=transcript_key,
         )
 
-        logger.info(
-            "started transcription job %s for %s/%s",
-            job_name,
-            bucket,
-            key,
-        )
-
         return {
             "transcription_job_name": job_name,
             "transcript_s3_key": transcript_key,
             "status": "IN_PROGRESS",
         }
 
-    def check_job(self, job_name: str) -> dict[str, str]:
-        response = self._client.get_transcription_job(
+    def check_job(self, job_name):
+        logger.info("Checking transcription job %s", job_name)
+
+        response = self.transcribe_client.get_transcription_job(
             TranscriptionJobName=job_name
         )
         status = response["TranscriptionJob"]["TranscriptionJobStatus"]
 
-        logger.info("transcription job %s status: %s", job_name, status)
-
         return {"status": status}
+
+
+service = TranscribeService()

@@ -1,8 +1,9 @@
-"""Initial schema: pgvector extension, video_chunks table, indexes
+"""initial schema
 
 Revision ID: 001
 Revises:
-Create Date: 2026-03-09
+Create Date: 2026-01-01 00:00:00.000000
+
 """
 from typing import Sequence, Union
 
@@ -41,12 +42,13 @@ def upgrade() -> None:
         WITH (m = 16, ef_construction = 64)
     """)
 
-    op.execute(
-        "CREATE INDEX idx_video_chunks_video_id ON video_chunks(video_id)"
-    )
-    op.execute(
-        "CREATE INDEX idx_video_chunks_speaker ON video_chunks(speaker)"
-    )
+    op.execute("""
+        CREATE INDEX idx_video_chunks_video_id ON video_chunks(video_id)
+    """)
+
+    op.execute("""
+        CREATE INDEX idx_video_chunks_speaker ON video_chunks(speaker)
+    """)
 
 
 def downgrade() -> None:

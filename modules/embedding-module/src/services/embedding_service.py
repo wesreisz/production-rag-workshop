@@ -26,25 +26,24 @@ ON CONFLICT (chunk_id) DO UPDATE SET
 
 
 class EmbeddingService:
-    def __init__(self) -> None:
+    def __init__(self):
         self._s3 = boto3.client("s3")
         self._bedrock = boto3.client("bedrock-runtime")
         self._secretsmanager = boto3.client("secretsmanager")
         self._db_conn = None
         self._dimensions = int(os.environ.get("EMBEDDING_DIMENSIONS", "256"))
-        self._secret_arn = os.environ["SECRET_ARN"]
-        self._db_name = os.environ["DB_NAME"]
+        self._secret_arn = os.environ.get("SECRET_ARN", "")
+        self._db_name = os.environ.get("DB_NAME", "")
 
     def get_db_connection(self):
-        if self._db_conn is not None and self._db_conn.closed == 0:
+        if self._db_conn is not None and not self._db_conn.closed:
             return self._db_conn
-
         try:
             response = self._secretsmanager.get_secret_value(SecretId=self._secret_arn)
             secret = json.loads(response["SecretString"])
             self._db_conn = psycopg2.connect(
                 host=secret["host"],
-                port=int(secret["port"]),
+                port=secret["port"],
                 dbname=self._db_name,
                 user=secret["username"],
                 password=secret["password"],
@@ -54,11 +53,11 @@ class EmbeddingService:
             self._db_conn = None
             raise
 
-    def read_chunk(self, bucket: str, key: str) -> dict:
+    def read_chunk(self, bucket, key):
         response = self._s3.get_object(Bucket=bucket, Key=key)
         return json.loads(response["Body"].read())
 
-    def generate_embedding(self, text: str) -> list[float]:
+    def generate_embedding(self, text):
         response = self._bedrock.invoke_model(
             modelId="amazon.titan-embed-text-v2:0",
             contentType="application/json",
@@ -72,11 +71,12 @@ class EmbeddingService:
         result = json.loads(response["body"].read())
         return result["embedding"]
 
-    def store_embedding(self, chunk: dict, embedding: list[float]) -> None:
+    def store_embedding(self, chunk, embedding):
         conn = self.get_db_connection()
         cursor = conn.cursor()
         try:
-            embedding_str = "[" + ", ".join(str(v) for v in embedding) + "]"
+            embedding_str = str(embedding)
+            metadata = chunk.get("metadata", {})
             cursor.execute(
                 UPSERT_SQL,
                 (
@@ -85,16 +85,16 @@ class EmbeddingService:
                     chunk["sequence"],
                     chunk["text"],
                     embedding_str,
-                    chunk["metadata"].get("speaker"),
-                    chunk["metadata"].get("title"),
+                    metadata.get("speaker"),
+                    metadata.get("title"),
                     chunk["start_time"],
                     chunk["end_time"],
-                    chunk["metadata"]["source_s3_key"],
+                    metadata.get("source_s3_key"),
                 ),
             )
             conn.commit()
-        except Exception:
-            conn.rollback()
-            raise
         finally:
             cursor.close()
+
+
+service = EmbeddingService()

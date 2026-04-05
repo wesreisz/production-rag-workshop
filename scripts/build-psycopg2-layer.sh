@@ -2,21 +2,29 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-LAYER_DIR="$PROJECT_ROOT/layers/psycopg2"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+LAYER_DIR="${PROJECT_ROOT}/layers/psycopg2"
+TMP_DIR="${PROJECT_ROOT}/.layer-build-tmp"
 
-echo "=== Building psycopg2 Lambda layer ==="
+cleanup() {
+  rm -rf "${TMP_DIR}"
+}
+trap cleanup EXIT
+rm -rf "${TMP_DIR}"
+mkdir -p "${TMP_DIR}"
 
-mkdir -p "$LAYER_DIR"
+echo "Building psycopg2 Lambda layer..."
 
-echo "1. Installing psycopg2-binary and creating zip inside Docker..."
 docker run --rm \
+  --entrypoint /bin/sh \
   --platform linux/amd64 \
-  --entrypoint "" \
-  -v "$LAYER_DIR:/output" \
+  -v "${TMP_DIR}:/out" \
   public.ecr.aws/lambda/python:3.11 \
-  bash -c "pip install psycopg2-binary -t /tmp/python/lib/python3.11/site-packages/ --quiet && cd /tmp && yum install -y zip --quiet && zip -r9 /output/psycopg2-layer.zip python/ -q"
+  -c "pip install psycopg2-binary -t /out/python/lib/python3.11/site-packages/"
 
-echo "2. Done!"
-echo "   Layer zip: $LAYER_DIR/psycopg2-layer.zip"
-ls -lh "$LAYER_DIR/psycopg2-layer.zip"
+mkdir -p "${LAYER_DIR}"
+
+cd "${TMP_DIR}"
+zip -r "${LAYER_DIR}/psycopg2-layer.zip" python/ -x "*.pyc" -x "*/__pycache__/*"
+
+echo "Layer built: ${LAYER_DIR}/psycopg2-layer.zip"

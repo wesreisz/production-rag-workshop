@@ -14,6 +14,6 @@ output "invoke_arn" {
 }
 
 output "role_arn" {
-  description = "Lambda IAM execution role ARN"
-  value       = aws_iam_role.lambda.arn
+  description = "IAM execution role ARN"
+  value       = aws_iam_role.execution.arn
 }

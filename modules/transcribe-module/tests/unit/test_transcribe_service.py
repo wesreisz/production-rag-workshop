@@ -1,109 +1,125 @@
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-import boto3
 import pytest
-from moto import mock_aws
 
 from src.services.transcribe_service import TranscribeService
 
 
 class TestDeriveVideoId:
-    def test_strips_prefix_and_extension(self):
+    def test_mp3_file(self):
         # Arrange
-        service = TranscribeService()
+        s3_key = "uploads/hello-my_name_is_wes.mp3"
 
         # Act
-        result = service.derive_video_id("uploads/sample.mp4")
-
-        # Assert
-        assert result == "sample"
-
-    def test_handles_mp3(self):
-        # Arrange
-        service = TranscribeService()
-
-        # Act
-        result = service.derive_video_id("uploads/hello-my_name_is_wes.mp3")
+        result = TranscribeService.derive_video_id(s3_key)
 
         # Assert
         assert result == "hello-my_name_is_wes"
 
-    def test_handles_hyphenated_name(self):
+    def test_mp4_file(self):
         # Arrange
-        service = TranscribeService()
+        s3_key = "uploads/sample.mp4"
 
         # Act
-        result = service.derive_video_id("uploads/my-talk.wav")
+        result = TranscribeService.derive_video_id(s3_key)
+
+        # Assert
+        assert result == "sample"
+
+    def test_wav_file(self):
+        # Arrange
+        s3_key = "uploads/my-talk.wav"
+
+        # Act
+        result = TranscribeService.derive_video_id(s3_key)
 
         # Assert
         assert result == "my-talk"
 
 
 class TestDetectMediaFormat:
-    def test_detects_mp4(self):
+    def test_mp3(self):
         # Arrange
-        service = TranscribeService()
+        s3_key = "uploads/file.mp3"
 
         # Act
-        result = service.detect_media_format("uploads/sample.mp4")
-
-        # Assert
-        assert result == "mp4"
-
-    def test_detects_mp3(self):
-        # Arrange
-        service = TranscribeService()
-
-        # Act
-        result = service.detect_media_format("uploads/sample.mp3")
+        result = TranscribeService.detect_media_format(s3_key)
 
         # Assert
         assert result == "mp3"
 
-    def test_raises_for_unsupported(self):
+    def test_mp4(self):
         # Arrange
-        service = TranscribeService()
-
-        # Act / Assert
-        with pytest.raises(ValueError, match="Unsupported media format"):
-            service.detect_media_format("uploads/sample.txt")
-
-
-class TestGetObjectMetadata:
-    @mock_aws
-    def test_returns_speaker_and_title(self):
-        # Arrange
-        s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket="test-bucket")
-        s3.put_object(
-            Bucket="test-bucket",
-            Key="uploads/sample.mp4",
-            Body=b"fake video",
-            Metadata={"speaker": "Jane Doe", "title": "Building RAG Systems"},
-        )
-        service = TranscribeService()
+        s3_key = "uploads/file.mp4"
 
         # Act
-        result = service.get_object_metadata("test-bucket", "uploads/sample.mp4")
+        result = TranscribeService.detect_media_format(s3_key)
 
         # Assert
-        assert result["speaker"] == "Jane Doe"
-        assert result["title"] == "Building RAG Systems"
+        assert result == "mp4"
 
-    @mock_aws
-    def test_returns_none_when_metadata_absent(self):
+    def test_wav(self):
         # Arrange
-        s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket="test-bucket")
-        s3.put_object(
-            Bucket="test-bucket",
-            Key="uploads/sample.mp4",
-            Body=b"fake video",
-        )
-        service = TranscribeService()
+        s3_key = "uploads/file.wav"
 
         # Act
-        result = service.get_object_metadata("test-bucket", "uploads/sample.mp4")
+        result = TranscribeService.detect_media_format(s3_key)
+
+        # Assert
+        assert result == "wav"
+
+    def test_flac(self):
+        # Arrange
+        s3_key = "uploads/file.flac"
+
+        # Act
+        result = TranscribeService.detect_media_format(s3_key)
+
+        # Assert
+        assert result == "flac"
+
+    def test_unsupported_format_raises(self):
+        # Arrange
+        s3_key = "uploads/file.txt"
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Unsupported media format"):
+            TranscribeService.detect_media_format(s3_key)
+
+
+class TestGetUploadMetadata:
+    def test_returns_speaker_and_title(self, mock_aws_services):
+        # Arrange
+        s3_client = mock_aws_services["s3"]
+        s3_client.create_bucket(Bucket="test-bucket")
+        s3_client.put_object(
+            Bucket="test-bucket",
+            Key="uploads/sample.mp3",
+            Body=b"fake audio",
+            Metadata={"speaker": "Jane", "title": "Talk"},
+        )
+        svc = TranscribeService(s3_client=s3_client)
+
+        # Act
+        result = svc.get_upload_metadata("test-bucket", "uploads/sample.mp3")
+
+        # Assert
+        assert result["speaker"] == "Jane"
+        assert result["title"] == "Talk"
+
+    def test_returns_none_when_no_metadata(self, mock_aws_services):
+        # Arrange
+        s3_client = mock_aws_services["s3"]
+        s3_client.create_bucket(Bucket="test-bucket")
+        s3_client.put_object(
+            Bucket="test-bucket",
+            Key="uploads/sample.mp3",
+            Body=b"fake audio",
+        )
+        svc = TranscribeService(s3_client=s3_client)
+
+        # Act
+        result = svc.get_upload_metadata("test-bucket", "uploads/sample.mp3")
 
         # Assert
         assert result["speaker"] is None
@@ -111,47 +127,84 @@ class TestGetObjectMetadata:
 
 
 class TestStartJob:
-    @mock_aws
-    @patch("src.services.transcribe_service.time.time", return_value=1700000000)
-    def test_starts_transcription_job(self, _mock_time):
+    def test_starts_transcription_job(self, mock_aws_services):
         # Arrange
-        s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket="test-bucket")
-        s3.put_object(Bucket="test-bucket", Key="uploads/sample.mp4", Body=b"fake video")
-
-        service = TranscribeService()
+        s3_client = mock_aws_services["s3"]
+        s3_client.create_bucket(Bucket="test-bucket")
+        s3_client.put_object(
+            Bucket="test-bucket",
+            Key="uploads/sample.mp3",
+            Body=b"fake audio",
+        )
+        transcribe_client = mock_aws_services["transcribe"]
+        svc = TranscribeService(transcribe_client=transcribe_client)
 
         # Act
-        result = service.start_job("test-bucket", "uploads/sample.mp4", "sample")
+        result = svc.start_job("test-bucket", "uploads/sample.mp3", "sample")
 
         # Assert
-        assert result["transcription_job_name"] == "production-rag-sample-1700000000"
+        assert result["transcription_job_name"] == "production-rag-sample"
         assert result["transcript_s3_key"] == "transcripts/sample/raw.json"
         assert result["status"] == "IN_PROGRESS"
 
+    def test_unsupported_format_raises(self, mock_aws_services):
+        # Arrange
+        transcribe_client = mock_aws_services["transcribe"]
+        svc = TranscribeService(transcribe_client=transcribe_client)
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="Unsupported media format"):
+            svc.start_job("test-bucket", "uploads/file.txt", "file")
+
 
 class TestCheckJob:
-    @mock_aws
-    def test_returns_job_status(self):
+    def test_returns_completed_status(self):
         # Arrange
-        s3 = boto3.client("s3", region_name="us-east-1")
-        s3.create_bucket(Bucket="test-bucket")
-        s3.put_object(Bucket="test-bucket", Key="uploads/sample.mp4", Body=b"fake video")
-
-        transcribe = boto3.client("transcribe", region_name="us-east-1")
-        transcribe.start_transcription_job(
-            TranscriptionJobName="production-rag-sample",
-            Media={"MediaFileUri": "s3://test-bucket/uploads/sample.mp4"},
-            MediaFormat="mp4",
-            LanguageCode="en-US",
-            OutputBucketName="test-bucket",
-            OutputKey="transcripts/sample/raw.json",
-        )
-
-        service = TranscribeService()
+        mock_client = MagicMock()
+        mock_client.get_transcription_job.return_value = {
+            "TranscriptionJob": {
+                "TranscriptionJobStatus": "COMPLETED",
+            }
+        }
+        svc = TranscribeService(transcribe_client=mock_client)
 
         # Act
-        result = service.check_job("production-rag-sample")
+        result = svc.check_job("production-rag-sample")
 
         # Assert
-        assert result["status"] in ("QUEUED", "IN_PROGRESS", "COMPLETED")
+        assert result["status"] == "COMPLETED"
+        mock_client.get_transcription_job.assert_called_once_with(
+            TranscriptionJobName="production-rag-sample"
+        )
+
+    def test_returns_in_progress_status(self):
+        # Arrange
+        mock_client = MagicMock()
+        mock_client.get_transcription_job.return_value = {
+            "TranscriptionJob": {
+                "TranscriptionJobStatus": "IN_PROGRESS",
+            }
+        }
+        svc = TranscribeService(transcribe_client=mock_client)
+
+        # Act
+        result = svc.check_job("production-rag-sample")
+
+        # Assert
+        assert result["status"] == "IN_PROGRESS"
+
+    def test_returns_failed_status(self):
+        # Arrange
+        mock_client = MagicMock()
+        mock_client.get_transcription_job.return_value = {
+            "TranscriptionJob": {
+                "TranscriptionJobStatus": "FAILED",
+            }
+        }
+        svc = TranscribeService(transcribe_client=mock_client)
+
+        # Act
+        result = svc.check_job("production-rag-sample")
+
+        # Assert
+        assert result["status"] == "FAILED"

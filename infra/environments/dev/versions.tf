@@ -6,13 +6,20 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 5.0"
     }
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "~> 3.0"
+    }
   }
 
   backend "s3" {
-    bucket         = "production-rag-tf-state-885268918288"
+    bucket         = "production-rag-tf-state-090082365295"
     key            = "dev/terraform.tfstate"
-    region         = "us-east-1"
     dynamodb_table = "production-rag-tf-lock"
-    encrypt        = true
+    region         = "us-east-1"
   }
 }

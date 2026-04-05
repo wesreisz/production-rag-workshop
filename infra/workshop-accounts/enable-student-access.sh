@@ -8,15 +8,17 @@ source "$SCRIPT_DIR/config.env"
 # Usage
 # ------------------------------------------------------------------
 if [ $# -lt 1 ]; then
-    echo "Usage: $0 <student_number>"
+    echo "Usage: $0 <student_number> [student_email]"
     echo ""
     echo "Examples:"
-    echo "  $0 1       # Configure student-01 account"
-    echo "  $0 15      # Configure student-15 account"
+    echo "  $0 1                          # Configure student-01 (no email)"
+    echo "  $0 1 alice@example.com        # Configure and email credentials"
+    echo "  $0 15 bob@example.com         # Configure student-15 and email"
     exit 1
 fi
 
 STUDENT_NUM=$1
+STUDENT_EMAIL="${2:-}"
 PADDED=$(printf '%02d' "$STUDENT_NUM")
 ACCOUNT_NAME="${STUDENT_ACCOUNT_PREFIX}-${PADDED}"
 
@@ -264,6 +266,26 @@ unset AWS_SECRET_ACCESS_KEY
 unset AWS_SESSION_TOKEN
 
 # ------------------------------------------------------------------
+# Email credentials (optional)
+# ------------------------------------------------------------------
+if [ -n "$STUDENT_EMAIL" ]; then
+    echo "[5/5] Emailing credentials to $STUDENT_EMAIL..."
+    if [ -z "$GMAIL_APP_PASSWORD" ]; then
+        echo "  -> WARNING: GMAIL_APP_PASSWORD not set in config.env. Skipping email."
+    else
+        python3 "$SCRIPT_DIR/send-credentials.py" \
+            "$GMAIL_SENDER" \
+            "$GMAIL_APP_PASSWORD" \
+            "$STUDENT_EMAIL" \
+            "$CRED_FILE"
+    fi
+    echo ""
+else
+    echo "[5/5] No email provided — skipping credential email."
+    echo ""
+fi
+
+# ------------------------------------------------------------------
 # Summary
 # ------------------------------------------------------------------
 echo "==========================================="
@@ -275,6 +297,9 @@ echo "  Account Name:  $ACCOUNT_NAME"
 echo "  Console URL:   $CONSOLE_URL"
 echo "  Credentials:   $CRED_FILE"
 echo "  Budget:        \$${BUDGET_LIMIT}/month"
+if [ -n "$STUDENT_EMAIL" ]; then
+echo "  Emailed to:    $STUDENT_EMAIL"
+fi
 echo ""
 echo "  Bedrock Titan models are available by default — no manual step needed."
 echo ""

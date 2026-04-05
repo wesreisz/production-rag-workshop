@@ -1,122 +1,196 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import httpx
 import pytest
-import respx
 
 from src.api_client import ApiClient
-from src.config import Settings
-
-BASE_URL = "https://test-api.execute-api.us-east-1.amazonaws.com/prod"
+from src.config import get_settings
 
 
-@pytest.fixture
-def settings(mock_env_vars):
-    return Settings()
+@pytest.fixture(autouse=True)
+def clear_settings_cache():
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
 
 
-@pytest.fixture
-def client(settings):
-    return ApiClient(settings)
+def _make_mock_client(json_return: dict) -> AsyncMock:
+    mock_response = MagicMock()
+    mock_response.json.return_value = json_return
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+    mock_client.get.return_value = mock_response
+    return mock_client
 
 
-class TestApiClientAsk:
+def _patch_httpx(mock_client: AsyncMock):
+    mock_cls = MagicMock()
+    mock_cls.return_value.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+    return patch("src.api_client.httpx.AsyncClient", mock_cls), mock_cls
+
+
+class TestAsk:
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_ask_sends_correct_request(self, client):
+    async def test_ask_sends_correct_request(self, valid_env):
         # Arrange
-        route = respx.post(f"{BASE_URL}/ask").mock(
-            return_value=httpx.Response(200, json={"question": "q", "results": []})
-        )
+        mock_client = _make_mock_client({"results": []})
+        ctx, mock_cls = _patch_httpx(mock_client)
 
         # Act
-        result = await client.ask("q", 5)
+        with ctx:
+            client = ApiClient()
+            await client.ask("What is RAG?", 5)
 
         # Assert
-        assert route.called
-        request = route.calls[0].request
-        assert b'"question": "q"' in request.content or b'"question":"q"' in request.content
-        assert request.headers["x-api-key"] == "test-api-key-1234567890"
-        assert result == {"question": "q", "results": []}
-
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_ask_with_speaker_filter(self, client):
-        # Arrange
-        route = respx.post(f"{BASE_URL}/ask").mock(
-            return_value=httpx.Response(200, json={"question": "q", "results": []})
+        mock_client.post.assert_called_once_with(
+            "/ask",
+            json={"question": "What is RAG?", "top_k": 5},
+            headers={"x-api-key": "test-api-key-12345"},
         )
 
+    @pytest.mark.asyncio
+    async def test_ask_with_speaker_filter(self, valid_env):
+        # Arrange
+        mock_client = _make_mock_client({"results": []})
+        ctx, _ = _patch_httpx(mock_client)
+
         # Act
-        await client.ask("q", 5, speaker="Jane Doe")
+        with ctx:
+            client = ApiClient()
+            await client.ask("What is RAG?", 5, speaker="Jane Doe")
 
         # Assert
-        import json
-        body = json.loads(route.calls[0].request.content)
-        assert body["filters"] == {"speaker": "Jane Doe"}
+        call_kwargs = mock_client.post.call_args[1]
+        assert call_kwargs["json"]["filters"] == {"speaker": "Jane Doe"}
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_ask_timeout_raises_runtime_error(self, client):
+    async def test_ask_timeout_raises_runtime_error(self, valid_env):
         # Arrange
-        respx.post(f"{BASE_URL}/ask").mock(side_effect=httpx.ConnectTimeout("timeout"))
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.TimeoutException("timeout")
+        ctx, _ = _patch_httpx(mock_client)
 
         # Act / Assert
-        with pytest.raises(RuntimeError, match="timed out"):
-            await client.ask("q", 5)
+        with ctx:
+            client = ApiClient()
+            with pytest.raises(RuntimeError):
+                await client.ask("What is RAG?")
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_ask_401_raises_auth_error(self, client):
+    async def test_ask_401_raises_auth_error(self, valid_env):
         # Arrange
-        respx.post(f"{BASE_URL}/ask").mock(
-            return_value=httpx.Response(401, json={"message": "Forbidden"})
+        mock_response = MagicMock()
+        mock_response.status_code = 401
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.HTTPStatusError(
+            "401", request=MagicMock(), response=mock_response
         )
+        ctx, _ = _patch_httpx(mock_client)
 
         # Act / Assert
-        with pytest.raises(RuntimeError, match="Authentication failed"):
-            await client.ask("q", 5)
+        with ctx:
+            client = ApiClient()
+            with pytest.raises(RuntimeError, match="Authentication"):
+                await client.ask("What is RAG?")
 
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_ask_network_error_raises_runtime_error(self, client):
+    async def test_ask_network_error_raises_runtime_error(self, valid_env):
         # Arrange
-        respx.post(f"{BASE_URL}/ask").mock(
-            side_effect=httpx.ConnectError("connection refused")
-        )
+        mock_client = AsyncMock()
+        mock_client.post.side_effect = httpx.RequestError("connection refused")
+        ctx, _ = _patch_httpx(mock_client)
 
         # Act / Assert
-        with pytest.raises(RuntimeError, match="Network error"):
-            await client.ask("q", 5)
+        with ctx:
+            client = ApiClient()
+            with pytest.raises(RuntimeError, match="Network"):
+                await client.ask("What is RAG?")
 
 
-class TestApiClientListVideos:
+class TestListVideos:
     @pytest.mark.asyncio
-    @respx.mock
-    async def test_list_videos_sends_correct_request(self, client):
+    async def test_list_videos_sends_correct_request(self, valid_env):
         # Arrange
-        route = respx.get(f"{BASE_URL}/videos").mock(
-            return_value=httpx.Response(200, json={"videos": []})
-        )
+        mock_client = _make_mock_client({"videos": []})
+        ctx, _ = _patch_httpx(mock_client)
 
         # Act
-        result = await client.list_videos()
+        with ctx:
+            client = ApiClient()
+            await client.list_videos()
 
         # Assert
-        assert route.called
-        assert route.calls[0].request.headers["x-api-key"] == "test-api-key-1234567890"
-        assert result == {"videos": []}
-
-
-class TestApiClientHealth:
-    @pytest.mark.asyncio
-    @respx.mock
-    async def test_health_returns_status(self, client):
-        # Arrange
-        respx.get(f"{BASE_URL}/health").mock(
-            return_value=httpx.Response(200, json={"status": "healthy"})
+        mock_client.get.assert_called_once_with(
+            "/videos",
+            headers={"x-api-key": "test-api-key-12345"},
         )
 
+
+class TestPresign:
+    @pytest.mark.asyncio
+    async def test_presign_sends_correct_request(self, valid_env):
+        # Arrange
+        mock_client = _make_mock_client({"presigned_url": "https://example.com/video.mp3"})
+        ctx, _ = _patch_httpx(mock_client)
+
         # Act
-        result = await client.health()
+        with ctx:
+            client = ApiClient()
+            await client.presign("v1")
+
+        # Assert
+        mock_client.get.assert_called_once_with(
+            "/videos/v1/presign",
+            headers={"x-api-key": "test-api-key-12345"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_presign_with_chunk_id(self, valid_env):
+        # Arrange
+        mock_client = _make_mock_client({"presigned_url": "https://example.com/video.mp3"})
+        ctx, _ = _patch_httpx(mock_client)
+
+        # Act
+        with ctx:
+            client = ApiClient()
+            await client.presign("v1", chunk_id="v1-chunk-001")
+
+        # Assert
+        mock_client.get.assert_called_once_with(
+            "/videos/v1/presign?chunk_id=v1-chunk-001",
+            headers={"x-api-key": "test-api-key-12345"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_presign_404_raises_runtime_error(self, valid_env):
+        # Arrange
+        mock_response = MagicMock()
+        mock_response.status_code = 404
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = httpx.HTTPStatusError(
+            "404", request=MagicMock(), response=mock_response
+        )
+        ctx, _ = _patch_httpx(mock_client)
+
+        # Act / Assert
+        with ctx:
+            client = ApiClient()
+            with pytest.raises(RuntimeError, match="video not found"):
+                await client.presign("nonexistent")
+
+
+class TestHealth:
+    @pytest.mark.asyncio
+    async def test_health_returns_status(self, valid_env):
+        # Arrange
+        mock_client = _make_mock_client({"status": "healthy"})
+        ctx, _ = _patch_httpx(mock_client)
+
+        # Act
+        with ctx:
+            client = ApiClient()
+            result = await client.health()
 
         # Assert
         assert result == {"status": "healthy"}

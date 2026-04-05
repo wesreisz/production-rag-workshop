@@ -1,13 +1,16 @@
 variable "bucket_name" {
-  type = string
+  description = "Full S3 bucket name"
+  type        = string
 }
 
 variable "enable_eventbridge" {
-  type    = bool
-  default = true
+  description = "Enable EventBridge notifications for this bucket"
+  type        = bool
+  default     = true
 }
 
 variable "tags" {
-  type    = map(string)
-  default = {}
+  description = "Resource tags"
+  type        = map(string)
+  default     = {}
 }

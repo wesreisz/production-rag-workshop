@@ -1,5 +1,5 @@
 output "api_url" {
-  description = "API Gateway base URL"
+  description = "Base URL (e.g. https://abc123.execute-api.us-east-1.amazonaws.com/prod)"
   value       = aws_api_gateway_stage.this.invoke_url
 }
 
@@ -9,7 +9,7 @@ output "rest_api_id" {
 }
 
 output "api_key_value" {
-  description = "API key value for x-api-key header"
+  description = "API key value (use in x-api-key header)"
   value       = aws_api_gateway_api_key.this.value
   sensitive   = true
 }

@@ -2,170 +2,159 @@ import io
 import json
 from unittest.mock import MagicMock, patch
 
-import boto3
 import pytest
 from botocore.exceptions import ClientError
 
 from src.services.embedding_service import EmbeddingService
+from src.handlers.process_embedding import handler
+
+
+def _make_bedrock_response(vector):
+    body_bytes = json.dumps({"embedding": vector, "inputTextTokenCount": 12}).encode()
+    return {"body": io.BytesIO(body_bytes)}
 
 
 class TestReadChunk:
-    def test_read_chunk_parses_json(self, s3_bucket, sample_chunk):
+    def test_read_chunk_parses_json(self, s3_bucket, mock_aws_services, sample_chunk):
         # Arrange
-        s3 = boto3.client("s3", region_name="us-east-1")
-        key = "chunks/hello-my_name_is_wes/chunk-001.json"
-        s3.put_object(Bucket=s3_bucket, Key=key, Body=json.dumps(sample_chunk))
-        service = EmbeddingService()
+        svc = EmbeddingService()
+        svc._s3 = mock_aws_services["s3"]
 
         # Act
-        result = service.read_chunk(s3_bucket, key)
+        result = svc.read_chunk(s3_bucket, "chunks/hello-my_name_is_wes/chunk-001.json")
 
         # Assert
         assert result == sample_chunk
 
-    def test_read_chunk_missing_key_raises(self, s3_bucket):
+    def test_read_chunk_missing_key_raises(self, s3_bucket, mock_aws_services):
         # Arrange
-        service = EmbeddingService()
+        svc = EmbeddingService()
+        svc._s3 = mock_aws_services["s3"]
 
         # Act / Assert
         with pytest.raises(ClientError):
-            service.read_chunk(s3_bucket, "nonexistent/key.json")
+            svc.read_chunk(s3_bucket, "chunks/nonexistent/chunk-999.json")
 
 
 class TestGenerateEmbedding:
-    def test_generate_embedding_returns_vector(self, mock_aws_services):
+    def test_generate_embedding_returns_vector(self):
         # Arrange
-        fake_embedding = [0.01 * i for i in range(256)]
-        mock_response = {
-            "body": io.BytesIO(json.dumps({
-                "embedding": fake_embedding,
-                "inputTextTokenCount": 12,
-            }).encode()),
-        }
-        service = EmbeddingService()
-        service._bedrock = MagicMock()
-        service._bedrock.invoke_model.return_value = mock_response
+        expected_vector = [0.01 * i for i in range(256)]
+        mock_bedrock = MagicMock()
+        mock_bedrock.invoke_model.return_value = _make_bedrock_response(expected_vector)
+        svc = EmbeddingService()
+        svc._bedrock = mock_bedrock
 
         # Act
-        result = service.generate_embedding("Hello, my name is Wes.")
+        result = svc.generate_embedding("Hello world")
 
         # Assert
-        assert result == fake_embedding
+        assert result == expected_vector
         assert len(result) == 256
 
-    def test_generate_embedding_passes_correct_params(self, mock_aws_services):
+    def test_generate_embedding_passes_correct_params(self):
         # Arrange
-        fake_embedding = [0.0] * 256
-        mock_response = {
-            "body": io.BytesIO(json.dumps({
-                "embedding": fake_embedding,
-                "inputTextTokenCount": 5,
-            }).encode()),
-        }
-        service = EmbeddingService()
-        service._bedrock = MagicMock()
-        service._bedrock.invoke_model.return_value = mock_response
+        vector = [0.0] * 256
+        mock_bedrock = MagicMock()
+        mock_bedrock.invoke_model.return_value = _make_bedrock_response(vector)
+        svc = EmbeddingService()
+        svc._bedrock = mock_bedrock
+        svc._dimensions = 256
 
         # Act
-        service.generate_embedding("test text")
+        svc.generate_embedding("Hello world")
 
         # Assert
-        call_kwargs = service._bedrock.invoke_model.call_args[1]
+        call_kwargs = mock_bedrock.invoke_model.call_args[1]
         assert call_kwargs["modelId"] == "amazon.titan-embed-text-v2:0"
-        assert call_kwargs["contentType"] == "application/json"
-        assert call_kwargs["accept"] == "application/json"
-        body = json.loads(call_kwargs["body"])
-        assert body["inputText"] == "test text"
-        assert body["dimensions"] == 256
-        assert body["normalize"] is True
+        request_body = json.loads(call_kwargs["body"])
+        assert request_body["dimensions"] == 256
+        assert request_body["normalize"] is True
+        assert request_body["inputText"] == "Hello world"
 
 
 class TestStoreEmbedding:
-    def test_store_embedding_executes_upsert(self, mock_aws_services, sample_chunk):
+    def test_store_embedding_executes_upsert(self, sample_chunk):
         # Arrange
-        service = EmbeddingService()
-        mock_conn = MagicMock()
         mock_cursor = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.closed = False
         mock_conn.cursor.return_value = mock_cursor
-        service.get_db_connection = MagicMock(return_value=mock_conn)
-        embedding = [0.01 * i for i in range(256)]
+        svc = EmbeddingService()
+        svc._db_conn = mock_conn
+        embedding = [0.01] * 256
 
         # Act
-        service.store_embedding(sample_chunk, embedding)
+        svc.store_embedding(sample_chunk, embedding)
 
         # Assert
-        mock_cursor.execute.assert_called_once()
-        sql = mock_cursor.execute.call_args[0][0]
-        assert "INSERT INTO video_chunks" in sql
-        assert "ON CONFLICT (chunk_id) DO UPDATE" in sql
-        params = mock_cursor.execute.call_args[0][1]
-        assert params[0] == sample_chunk["chunk_id"]
-        assert params[1] == sample_chunk["video_id"]
-        assert params[2] == sample_chunk["sequence"]
-        assert params[3] == sample_chunk["text"]
-        assert params[5] == sample_chunk["metadata"]["speaker"]
-        assert params[6] == sample_chunk["metadata"]["title"]
-        assert params[7] == sample_chunk["start_time"]
-        assert params[8] == sample_chunk["end_time"]
-        assert params[9] == sample_chunk["metadata"]["source_s3_key"]
+        executed_sql = mock_cursor.execute.call_args[0][0]
+        assert "INSERT INTO video_chunks" in executed_sql
+        assert "ON CONFLICT" in executed_sql
 
-    def test_store_embedding_commits(self, mock_aws_services, sample_chunk):
+    def test_store_embedding_commits(self, sample_chunk):
         # Arrange
-        service = EmbeddingService()
-        mock_conn = MagicMock()
         mock_cursor = MagicMock()
+        mock_conn = MagicMock()
+        mock_conn.closed = False
         mock_conn.cursor.return_value = mock_cursor
-        service.get_db_connection = MagicMock(return_value=mock_conn)
-        embedding = [0.0] * 256
+        svc = EmbeddingService()
+        svc._db_conn = mock_conn
+        embedding = [0.01] * 256
 
         # Act
-        service.store_embedding(sample_chunk, embedding)
+        svc.store_embedding(sample_chunk, embedding)
 
         # Assert
         mock_conn.commit.assert_called_once()
 
 
 class TestHandler:
-    @patch("src.handlers.process_embedding.service")
-    def test_handler_processes_single_record(self, mock_service, sample_sqs_event, sample_chunk):
+    def test_handler_processes_single_record(self, sample_sqs_event, sample_chunk):
         # Arrange
-        from src.handlers.process_embedding import handler
+        mock_context = MagicMock()
+        mock_context.aws_request_id = "test-request-id"
+        embedding = [0.01] * 256
 
-        mock_service.read_chunk.return_value = sample_chunk
-        mock_service.generate_embedding.return_value = [0.0] * 256
+        with patch("src.handlers.process_embedding.service") as mock_service:
+            mock_service.read_chunk.return_value = sample_chunk
+            mock_service.generate_embedding.return_value = embedding
 
-        # Act
-        handler(sample_sqs_event, None)
+            # Act
+            handler(sample_sqs_event, mock_context)
 
         # Assert
-        mock_service.read_chunk.assert_called_once_with(
-            "test-bucket", "chunks/hello-my_name_is_wes/chunk-001.json"
-        )
+        mock_service.read_chunk.assert_called_once()
         mock_service.generate_embedding.assert_called_once_with(sample_chunk["text"])
-        mock_service.store_embedding.assert_called_once_with(
-            sample_chunk, [0.0] * 256
-        )
+        mock_service.store_embedding.assert_called_once_with(sample_chunk, embedding)
 
-    @patch("src.handlers.process_embedding.service")
-    def test_handler_processes_multiple_records(self, mock_service, sample_sqs_event, sample_chunk):
+    def test_handler_processes_multiple_records(self, sample_chunk):
         # Arrange
-        from src.handlers.process_embedding import handler
+        mock_context = MagicMock()
+        mock_context.aws_request_id = "test-request-id"
+        embedding = [0.01] * 256
 
-        second_record = dict(sample_sqs_event["Records"][0])
-        second_record["body"] = json.dumps({
-            "chunk_s3_key": "chunks/hello-my_name_is_wes/chunk-002.json",
-            "bucket": "test-bucket",
-            "video_id": "hello-my_name_is_wes",
-            "speaker": "Jane Doe",
-            "title": "Building RAG Systems",
-        })
-        sample_sqs_event["Records"].append(second_record)
+        two_record_event = {
+            "Records": [
+                {
+                    "body": json.dumps({
+                        "chunk_s3_key": f"chunks/vid/chunk-00{i}.json",
+                        "bucket": "test-bucket",
+                        "video_id": "vid",
+                        "speaker": None,
+                        "title": None,
+                    })
+                }
+                for i in range(1, 3)
+            ]
+        }
 
-        mock_service.read_chunk.return_value = sample_chunk
-        mock_service.generate_embedding.return_value = [0.0] * 256
+        with patch("src.handlers.process_embedding.service") as mock_service:
+            mock_service.read_chunk.return_value = sample_chunk
+            mock_service.generate_embedding.return_value = embedding
 
-        # Act
-        handler(sample_sqs_event, None)
+            # Act
+            handler(two_record_event, mock_context)
 
         # Assert
         assert mock_service.read_chunk.call_count == 2

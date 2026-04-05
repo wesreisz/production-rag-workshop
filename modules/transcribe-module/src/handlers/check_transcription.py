@@ -1,18 +1,41 @@
-from src.services.transcribe_service import TranscribeService
+from src.services.transcribe_service import service
+from src.utils.logger import get_logger
 
-service = TranscribeService()
+logger = get_logger(__name__)
 
 
-def handler(event: dict, context) -> dict:
-    detail = event["detail"]
-    job_name = detail["transcription_job_name"]
+def handler(event, context):
+    request_id = getattr(context, "aws_request_id", "local")
+    try:
+        detail = event["detail"]
+        job_name = detail["transcription_job_name"]
 
-    result = service.check_job(job_name)
+        logger.info(
+            "Checking transcription job %s",
+            job_name,
+            extra={"request_id": request_id},
+        )
 
-    return {
-        "statusCode": 200,
-        "detail": {
-            **detail,
-            "status": result["status"],
-        },
-    }
+        result = service.check_job(job_name)
+
+        return {
+            "statusCode": 200,
+            "detail": {
+                "transcription_job_name": detail["transcription_job_name"],
+                "transcript_s3_key": detail["transcript_s3_key"],
+                "bucket_name": detail["bucket_name"],
+                "source_key": detail["source_key"],
+                "video_id": detail["video_id"],
+                "speaker": detail.get("speaker"),
+                "title": detail.get("title"),
+                "status": result["status"],
+            },
+        }
+
+    except ValueError as e:
+        logger.error("Validation error: %s", e, extra={"request_id": request_id})
+        return {"statusCode": 400, "detail": {"error": str(e)}}
+
+    except Exception as e:
+        logger.error("Unexpected error: %s", e, extra={"request_id": request_id})
+        return {"statusCode": 500, "detail": {"error": "internal error"}}

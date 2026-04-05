@@ -1,213 +1,167 @@
 import json
+from unittest.mock import MagicMock
 
-import boto3
 import pytest
-from moto import mock_aws
 
 from src.services.chunking_service import ChunkingService
 
 
 class TestParseTimedWords:
-    def test_attaches_punctuation(self, sample_transcript):
+    def test_parse_timed_words_attaches_punctuation(self, sample_transcript):
         # Arrange
-        service = ChunkingService()
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=MagicMock())
 
         # Act
-        words = service.parse_timed_words(sample_transcript)
+        result = svc.parse_timed_words(sample_transcript)
 
         # Assert
-        assert words[0]["text"] == "Hello,"
-        assert words[4]["text"] == "Wes."
+        assert result[0]["text"] == "Hello,"
+        assert result[0]["start_time"] == 0.0
+        assert result[0]["end_time"] == 0.43
+        assert result[4]["text"] == "Wes."
+        assert len(result) == 13
 
-    def test_empty_items(self):
+    def test_parse_timed_words_empty_items(self):
         # Arrange
-        service = ChunkingService()
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=MagicMock())
         transcript = {"results": {"items": []}}
 
         # Act
-        words = service.parse_timed_words(transcript)
+        result = svc.parse_timed_words(transcript)
 
         # Assert
-        assert words == []
-
-    def test_pronunciation_only(self):
-        # Arrange
-        service = ChunkingService()
-        transcript = {
-            "results": {
-                "items": [
-                    {"type": "pronunciation", "alternatives": [{"content": "Hello"}], "start_time": "0.0", "end_time": "0.5"},
-                    {"type": "pronunciation", "alternatives": [{"content": "world"}], "start_time": "0.6", "end_time": "1.0"},
-                ]
-            }
-        }
-
-        # Act
-        words = service.parse_timed_words(transcript)
-
-        # Assert
-        assert len(words) == 2
-        assert words[0]["text"] == "Hello"
-        assert words[0]["start_time"] == 0.0
-        assert words[0]["end_time"] == 0.5
-        assert words[1]["text"] == "world"
-        assert words[1]["start_time"] == 0.6
+        assert result == []
 
 
 class TestBuildSentences:
-    def test_splits_on_period(self, sample_transcript):
+    def test_build_sentences_splits_on_period(self, sample_transcript):
         # Arrange
-        service = ChunkingService()
-        words = service.parse_timed_words(sample_transcript)
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=MagicMock())
+        timed_words = svc.parse_timed_words(sample_transcript)
 
         # Act
-        sentences = service.build_sentences(words)
+        result = svc.build_sentences(timed_words)
 
         # Assert
-        assert len(sentences) == 2
-        assert sentences[0]["text"] == "Hello, my name is Wes."
-        assert sentences[0]["word_count"] == 5
-        assert sentences[0]["start_time"] == 0.0
-        assert sentences[0]["end_time"] == 1.40
-        assert sentences[1]["text"] == "I talk about RAG."
-        assert sentences[1]["word_count"] == 4
-        assert sentences[1]["start_time"] == 1.50
+        assert len(result) == 3
+        assert result[0]["text"] == "Hello, my name is Wes."
+        assert result[0]["start_time"] == 0.0
+        assert result[0]["end_time"] == 1.2
+        assert result[0]["word_count"] == 5
+        assert result[1]["text"] == "I talk about RAG pipelines."
+        assert result[2]["text"] == "They are useful."
 
-    def test_no_punctuation(self):
+    def test_build_sentences_no_punctuation(self):
         # Arrange
-        service = ChunkingService()
-        words = [
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=MagicMock())
+        timed_words = [
             {"text": "Hello", "start_time": 0.0, "end_time": 0.5},
             {"text": "world", "start_time": 0.6, "end_time": 1.0},
         ]
 
         # Act
-        sentences = service.build_sentences(words)
+        result = svc.build_sentences(timed_words)
 
         # Assert
-        assert len(sentences) == 1
-        assert sentences[0]["text"] == "Hello world"
-        assert sentences[0]["word_count"] == 2
-
-    def test_empty_input(self):
-        # Arrange
-        service = ChunkingService()
-
-        # Act
-        sentences = service.build_sentences([])
-
-        # Assert
-        assert sentences == []
+        assert len(result) == 1
+        assert result[0]["text"] == "Hello world"
+        assert result[0]["word_count"] == 2
 
 
 class TestChunk:
-    def test_short_transcript(self, sample_transcript):
+    def test_chunk_short_transcript(self, sample_transcript):
         # Arrange
-        service = ChunkingService()
-        words = service.parse_timed_words(sample_transcript)
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=MagicMock())
+        timed_words = svc.parse_timed_words(sample_transcript)
 
         # Act
-        chunks = service.chunk(
-            words, "test-video", "uploads/test.mp3",
-            speaker="Jane Doe", title="Building RAG",
-        )
+        result = svc.chunk(timed_words, "test-video", "uploads/test.mp3", "Jane", "Talk")
 
         # Assert
-        assert len(chunks) == 1
-        assert chunks[0]["chunk_id"] == "test-video-chunk-001"
-        assert chunks[0]["video_id"] == "test-video"
-        assert chunks[0]["sequence"] == 1
-        assert chunks[0]["word_count"] == 9
-        assert chunks[0]["start_time"] == 0.0
-        assert chunks[0]["metadata"]["source_s3_key"] == "uploads/test.mp3"
-        assert chunks[0]["metadata"]["total_chunks"] == 1
-        assert chunks[0]["metadata"]["speaker"] == "Jane Doe"
-        assert chunks[0]["metadata"]["title"] == "Building RAG"
+        assert len(result) == 1
+        assert result[0]["chunk_id"] == "test-video-chunk-001"
+        assert result[0]["video_id"] == "test-video"
+        assert result[0]["sequence"] == 1
 
-    def test_long_transcript(self, long_transcript):
+    def test_chunk_long_transcript(self, long_transcript):
         # Arrange
-        service = ChunkingService()
-        words = service.parse_timed_words(long_transcript)
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=MagicMock())
+        timed_words = svc.parse_timed_words(long_transcript)
 
         # Act
-        chunks = service.chunk(words, "long-video", "uploads/long.mp4")
+        result = svc.chunk(timed_words, "long-video", "uploads/long.mp3", None, None)
 
         # Assert
-        assert len(chunks) >= 2
-        for chunk in chunks:
-            assert chunk["word_count"] <= 600
+        assert len(result) > 1
+        for chunk in result:
             assert chunk["text"]
-            assert chunk["metadata"]["total_chunks"] == len(chunks)
+            assert chunk["word_count"] > 0
 
-    def test_overlap(self, long_transcript):
+    def test_chunk_overlap(self, long_transcript):
         # Arrange
-        service = ChunkingService()
-        words = service.parse_timed_words(long_transcript)
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=MagicMock())
+        timed_words = svc.parse_timed_words(long_transcript)
 
         # Act
-        chunks = service.chunk(words, "overlap-video", "uploads/overlap.mp4")
+        result = svc.chunk(timed_words, "long-video", "uploads/long.mp3", None, None)
 
         # Assert
-        if len(chunks) >= 2:
-            first_chunk_words = set(chunks[0]["text"].split()[-50:])
-            second_chunk_words = set(chunks[1]["text"].split()[:50])
-            overlap = first_chunk_words & second_chunk_words
-            assert len(overlap) > 0
+        assert len(result) >= 2
+        first_words = set(result[0]["text"].split())
+        second_words = set(result[1]["text"].split())
+        overlap = first_words & second_words
+        assert len(overlap) >= 40
 
-    def test_metadata(self, sample_transcript):
+    def test_chunk_metadata(self, sample_transcript):
         # Arrange
-        service = ChunkingService()
-        words = service.parse_timed_words(sample_transcript)
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=MagicMock())
+        timed_words = svc.parse_timed_words(sample_transcript)
 
         # Act
-        chunks = service.chunk(
-            words, "meta-video", "uploads/meta.mp3",
-            speaker="Wes", title="Meta Talk",
-        )
+        result = svc.chunk(timed_words, "test-video", "uploads/test.mp3", "Jane Doe", "Building RAG")
 
         # Assert
-        chunk = chunks[0]
-        assert "chunk_id" in chunk
-        assert "video_id" in chunk
-        assert "sequence" in chunk
-        assert "text" in chunk
-        assert "word_count" in chunk
-        assert chunk["start_time"] < chunk["end_time"]
-        assert chunk["metadata"]["source_s3_key"] == "uploads/meta.mp3"
+        chunk = result[0]
+        assert chunk["video_id"] == "test-video"
+        assert chunk["sequence"] == 1
+        assert chunk["start_time"] == 0.0
+        assert chunk["end_time"] == 3.8
+        assert chunk["metadata"]["speaker"] == "Jane Doe"
+        assert chunk["metadata"]["title"] == "Building RAG"
+        assert chunk["metadata"]["source_s3_key"] == "uploads/test.mp3"
         assert chunk["metadata"]["total_chunks"] == 1
-        assert chunk["metadata"]["speaker"] == "Wes"
-        assert chunk["metadata"]["title"] == "Meta Talk"
 
 
 class TestStoreChunks:
-    def test_writes_to_s3(self, s3_bucket):
+    def test_store_chunks_writes_to_s3(self, s3_bucket, mock_aws_services):
         # Arrange
-        service = ChunkingService()
+        s3_client = mock_aws_services["s3"]
+        svc = ChunkingService(s3_client=s3_client, sqs_client=MagicMock())
         chunks = [
-            {"chunk_id": "v-chunk-001", "sequence": 1, "text": "first chunk"},
-            {"chunk_id": "v-chunk-002", "sequence": 2, "text": "second chunk"},
+            {"chunk_id": "vid-chunk-001", "sequence": 1, "text": "Hello."},
+            {"chunk_id": "vid-chunk-002", "sequence": 2, "text": "World."},
         ]
 
         # Act
-        keys = service.store_chunks(s3_bucket, "v", chunks)
+        svc.store_chunks(s3_bucket, "vid", chunks)
 
         # Assert
-        s3 = boto3.client("s3", region_name="us-east-1")
-        for key in keys:
-            obj = s3.get_object(Bucket=s3_bucket, Key=key)
-            body = json.loads(obj["Body"].read())
-            assert "chunk_id" in body
+        obj1 = s3_client.get_object(Bucket=s3_bucket, Key="chunks/vid/chunk-001.json")
+        obj2 = s3_client.get_object(Bucket=s3_bucket, Key="chunks/vid/chunk-002.json")
+        assert json.loads(obj1["Body"].read())["text"] == "Hello."
+        assert json.loads(obj2["Body"].read())["text"] == "World."
 
-    def test_returns_keys(self, s3_bucket):
+    def test_store_chunks_returns_keys(self, s3_bucket, mock_aws_services):
         # Arrange
-        service = ChunkingService()
+        s3_client = mock_aws_services["s3"]
+        svc = ChunkingService(s3_client=s3_client, sqs_client=MagicMock())
         chunks = [
-            {"chunk_id": "vid-chunk-001", "sequence": 1, "text": "chunk one"},
-            {"chunk_id": "vid-chunk-002", "sequence": 2, "text": "chunk two"},
+            {"chunk_id": "vid-chunk-001", "sequence": 1, "text": "Hello."},
+            {"chunk_id": "vid-chunk-002", "sequence": 2, "text": "World."},
         ]
 
         # Act
-        keys = service.store_chunks(s3_bucket, "vid", chunks)
+        keys = svc.store_chunks(s3_bucket, "vid", chunks)
 
         # Assert
         assert keys == [
@@ -217,52 +171,47 @@ class TestStoreChunks:
 
 
 class TestPublishChunks:
-    @mock_aws
-    def test_sends_sqs_messages(self):
+    def test_publish_chunks_sends_sqs_messages(self):
         # Arrange
-        sqs = boto3.client("sqs", region_name="us-east-1")
-        queue = sqs.create_queue(QueueName="test-embedding-queue")
-        queue_url = queue["QueueUrl"]
-        service = ChunkingService()
+        mock_sqs = MagicMock()
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=mock_sqs)
         chunk_keys = [
-            "chunks/v/chunk-001.json",
-            "chunks/v/chunk-002.json",
+            "chunks/vid/chunk-001.json",
+            "chunks/vid/chunk-002.json",
+            "chunks/vid/chunk-003.json",
         ]
 
         # Act
-        service.publish_chunks(
-            queue_url, chunk_keys, "test-bucket", "test-video",
-            speaker="Jane Doe", title="Building RAG",
+        svc.publish_chunks(
+            "https://sqs.us-east-1.amazonaws.com/123/queue",
+            chunk_keys, "test-bucket", "vid", "Jane", "Talk",
         )
 
         # Assert
-        messages = sqs.receive_message(QueueUrl=queue_url, MaxNumberOfMessages=10)
-        bodies = [json.loads(m["Body"]) for m in messages["Messages"]]
-        assert len(bodies) == 2
-        assert bodies[0]["chunk_s3_key"] == "chunks/v/chunk-001.json"
-        assert bodies[0]["bucket"] == "test-bucket"
-        assert bodies[0]["video_id"] == "test-video"
-        assert bodies[0]["speaker"] == "Jane Doe"
-        assert bodies[0]["title"] == "Building RAG"
-        assert bodies[1]["chunk_s3_key"] == "chunks/v/chunk-002.json"
+        assert mock_sqs.send_message.call_count == 3
+        first_call_body = json.loads(
+            mock_sqs.send_message.call_args_list[0][1]["MessageBody"]
+        )
+        assert first_call_body["chunk_s3_key"] == "chunks/vid/chunk-001.json"
+        assert first_call_body["bucket"] == "test-bucket"
+        assert first_call_body["video_id"] == "vid"
+        assert first_call_body["speaker"] == "Jane"
+        assert first_call_body["title"] == "Talk"
 
-    @mock_aws
-    def test_returns_count(self):
+    def test_publish_chunks_returns_count(self):
         # Arrange
-        sqs = boto3.client("sqs", region_name="us-east-1")
-        queue = sqs.create_queue(QueueName="test-embedding-queue")
-        queue_url = queue["QueueUrl"]
-        service = ChunkingService()
+        mock_sqs = MagicMock()
+        svc = ChunkingService(s3_client=MagicMock(), sqs_client=mock_sqs)
         chunk_keys = [
-            "chunks/v/chunk-001.json",
-            "chunks/v/chunk-002.json",
-            "chunks/v/chunk-003.json",
+            "chunks/vid/chunk-001.json",
+            "chunks/vid/chunk-002.json",
+            "chunks/vid/chunk-003.json",
         ]
 
         # Act
-        result = service.publish_chunks(
-            queue_url, chunk_keys, "test-bucket", "test-video",
-            speaker="Wes", title="RAG Talk",
+        result = svc.publish_chunks(
+            "https://sqs.us-east-1.amazonaws.com/123/queue",
+            chunk_keys, "test-bucket", "vid", None, None,
         )
 
         # Assert

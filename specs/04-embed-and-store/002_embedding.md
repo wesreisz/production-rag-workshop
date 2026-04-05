@@ -20,6 +20,7 @@
 - [ ] Aurora Serverless v2 is running with pgvector extension and `video_chunks` table (Alembic migration `001` applied)
 - [ ] Secrets Manager secret contains valid database credentials
 - [ ] VPC endpoints for S3, Bedrock Runtime, and Secrets Manager are available
+- [ ] Lambda security group has a self-referencing ingress rule on port 443 (required for interface VPC endpoints — see [Known Issues](#known-issues))
 - [ ] psycopg2 Lambda layer is deployed
 - [ ] Bedrock `amazon.titan-embed-text-v2:0` is available (enabled by default)
 
@@ -480,6 +481,97 @@ Add one Lambda module call to `infra/environments/dev/main.tf` using the `infra/
 - [ ] 12. Run `terraform init && terraform apply` in `infra/environments/dev/`
 - [ ] 13. Verify: upload sample audio and confirm the full pipeline completes (transcription → chunking → embedding)
 - [ ] 14. Verify: query pgvector to confirm embeddings are stored
+
+---
+
+## Known Issues
+
+### VPC Interface Endpoints Unreachable — `ConnectTimeoutError` on Secrets Manager or Bedrock
+
+**Symptom:** The migration Lambda (or embedding Lambda) hangs for ~85 seconds then fails with:
+
+```
+ConnectTimeoutError: Connect timeout on endpoint URL: "https://secretsmanager.us-east-1.amazonaws.com/"
+```
+
+**Cause:** The Secrets Manager and Bedrock Runtime VPC endpoints are interface endpoints — they place an ENI in the VPC with a security group attached. In this project both endpoints use the Lambda security group (`production-rag-lambda-sg`). For traffic from Lambda to reach the endpoint ENI, that security group needs an **inbound rule on port 443**. Without it, the endpoint ENI silently drops the connection and the Lambda retries against the public URL, which is unreachable from inside the VPC (no NAT gateway).
+
+**Fix:** Add a self-referencing ingress rule on port 443 to the Lambda security group in `infra/modules/networking/main.tf`:
+
+```hcl
+resource "aws_security_group" "lambda" {
+  name   = "${var.project_name}-lambda-sg"
+  vpc_id = data.aws_vpc.default.id
+
+  ingress {
+    from_port = 443
+    to_port   = 443
+    protocol  = "tcp"
+    self      = true
+  }
+
+  egress {
+    from_port   = 0
+    to_port     = 0
+    protocol    = "-1"
+    cidr_blocks = ["0.0.0.0/0"]
+  }
+}
+```
+
+After adding this rule, run `terraform apply` and re-invoke the migration Lambda. The `self = true` attribute means "allow inbound from any resource also in this security group" — which covers both the Lambda functions and the VPC endpoint ENIs that share this SG.
+
+**Why this isn't caught earlier:** The networking module provisions the VPC endpoints but the missing ingress rule only manifests when a VPC-attached Lambda first tries to call Secrets Manager or Bedrock. If you invoke the migration Lambda and it hangs for 85+ seconds before failing, this is almost certainly the cause.
+
+---
+
+### Migration Lambda Path Error — `Path doesn't exist: .../migrations`
+
+**Symptom:** After fixing the VPC endpoint issue, migrations still fail with:
+
+```
+CommandError: Path doesn't exist: /var/task/src/handlers/../../../migrations.
+Please use the 'init' command to create a new scripts folder.
+```
+
+**Cause:** The `run_migrations.py` handler computes the migrations directory path relative to `__file__`. Three `..` traversals from `/var/task/src/handlers/` lands at `/var/` — one level above the Lambda task root — so the `migrations/` folder is never found. The correct path requires only two `..` traversals to reach `/var/task/`.
+
+**Fix:** In `modules/migration-module/src/handlers/run_migrations.py`, change:
+
+```python
+migrations_dir = os.path.join(os.path.dirname(__file__), "..", "..", "..", "migrations")
+```
+
+to:
+
+```python
+migrations_dir = os.path.join(os.path.dirname(__file__), "..", "..", "migrations")
+```
+
+---
+
+### `terraform apply` Migration Silently Succeeds on Lambda Failure
+
+**Symptom:** `terraform apply` completes successfully but the `video_chunks` table does not exist in the database. The `null_resource.run_migrations` provisioner exited 0 even though the Lambda returned a `FunctionError`.
+
+**Cause:** `aws lambda invoke` always exits with code 0 regardless of whether the Lambda function itself succeeded or threw an exception. The `FunctionError` field only appears in the invocation response JSON — Terraform's `local-exec` provisioner never sees it and assumes success.
+
+**Fix:** The `null_resource.run_migrations` provisioner in `infra/environments/dev/main.tf` must check the Lambda response file for `errorMessage` and exit non-zero if found. Additionally, `--cli-read-timeout` must be set to at least 310 seconds (Lambda timeout is 300s — the default CLI timeout of 60s causes the provisioner to abandon the invocation before the Lambda completes):
+
+```hcl
+provisioner "local-exec" {
+  command = <<-EOT
+    aws lambda invoke \
+      --function-name ${module.run_migrations.function_name} \
+      --payload '{}' \
+      --cli-binary-format raw-in-base64-out \
+      --cli-read-timeout 310 \
+      /tmp/migration-response.json
+    cat /tmp/migration-response.json
+    grep -q '"errorMessage"' /tmp/migration-response.json && exit 1 || true
+  EOT
+}
+```
 
 ---
 

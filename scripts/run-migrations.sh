@@ -2,33 +2,19 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-TF_DIR="$PROJECT_ROOT/infra/environments/dev"
+PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+INFRA_DIR="${PROJECT_ROOT}/infra/environments/dev"
+MIGRATIONS_DIR="${PROJECT_ROOT}/modules/migration-module/migrations"
 
-echo "=== Reading connection details from Terraform outputs ==="
+ENDPOINT=$(terraform -chdir="${INFRA_DIR}" output -raw aurora_cluster_endpoint)
+DB_NAME=$(terraform -chdir="${INFRA_DIR}" output -raw aurora_db_name)
+SECRET_ARN=$(terraform -chdir="${INFRA_DIR}" output -raw aurora_secret_arn)
 
-ENDPOINT=$(terraform -chdir="$TF_DIR" output -raw aurora_cluster_endpoint)
-DB_NAME=$(terraform -chdir="$TF_DIR" output -raw aurora_db_name)
-DB_USER="ragadmin"
-DB_PORT="5432"
+SECRET=$(aws secretsmanager get-secret-value --secret-id "${SECRET_ARN}" --query SecretString --output text)
+USERNAME=$(echo "${SECRET}" | python3 -c "import sys,json; print(json.load(sys.stdin)['username'])")
+PASSWORD=$(echo "${SECRET}" | python3 -c "import sys,json; print(json.load(sys.stdin)['password'])")
 
-if [ -z "${PGPASSWORD:-}" ]; then
-  echo "ERROR: PGPASSWORD environment variable is not set."
-  echo "Usage: PGPASSWORD=YourPassword bash scripts/run-migrations.sh"
-  exit 1
-fi
+export DATABASE_URL="postgresql+psycopg2://${USERNAME}:${PASSWORD}@${ENDPOINT}:5432/${DB_NAME}"
 
-export DATABASE_URL="postgresql://${DB_USER}:${PGPASSWORD}@${ENDPOINT}:${DB_PORT}/${DB_NAME}"
-
-echo "  Host: $ENDPOINT"
-echo "  DB:   $DB_NAME"
-echo "  User: $DB_USER"
-
-echo ""
-echo "=== Running Alembic migrations ==="
-
-cd "$PROJECT_ROOT/modules/migration-module/migrations"
-alembic upgrade head
-
-echo ""
-echo "=== Migrations complete ==="
+cd "${PROJECT_ROOT}/modules/migration-module"
+alembic -c migrations/alembic.ini upgrade head

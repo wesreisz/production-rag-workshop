@@ -7,14 +7,14 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(case_sensitive=False, extra="ignore")
 
-    api_endpoint: str = Field(..., min_length=10)
-    api_key: str = Field(..., min_length=10)
+    api_endpoint: str = Field(min_length=10)
+    api_key: str = Field(min_length=10)
 
     @field_validator("api_endpoint")
     @classmethod
-    def validate_api_endpoint_scheme(cls, v: str) -> str:
+    def must_start_with_http(cls, v: str) -> str:
         if not v.startswith("http"):
-            raise ValueError("api_endpoint must start with http:// or https://")
+            raise ValueError("api_endpoint must start with http")
         return v
 
 

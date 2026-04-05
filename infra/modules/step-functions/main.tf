@@ -1,11 +1,11 @@
-resource "aws_cloudwatch_log_group" "pipeline" {
-  name              = "/aws/stepfunctions/${var.project_name}-pipeline"
-  retention_in_days = var.log_retention_days
-  tags              = var.tags
+resource "aws_cloudwatch_log_group" "this" {
+  name = "/aws/stepfunctions/${var.project_name}-pipeline"
+  tags = var.tags
 }
 
-resource "aws_iam_role" "sfn_execution" {
+resource "aws_iam_role" "execution" {
   name = "${var.project_name}-sfn-execution"
+  tags = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -19,13 +19,11 @@ resource "aws_iam_role" "sfn_execution" {
       }
     ]
   })
-
-  tags = var.tags
 }
 
-resource "aws_iam_role_policy" "sfn_logging" {
-  name = "${var.project_name}-sfn-logging"
-  role = aws_iam_role.sfn_execution.id
+resource "aws_iam_role_policy" "logging" {
+  name = "cloudwatch-logs"
+  role = aws_iam_role.execution.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -48,60 +46,56 @@ resource "aws_iam_role_policy" "sfn_logging" {
   })
 }
 
-resource "aws_iam_role_policy" "sfn_lambda_invoke" {
-  name = "${var.project_name}-sfn-lambda-invoke"
-  role = aws_iam_role.sfn_execution.id
-
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [
-      {
-        Effect   = "Allow"
-        Action   = "lambda:InvokeFunction"
-        Resource = var.lambda_arns
-      }
-    ]
-  })
+resource "aws_iam_role_policy" "additional" {
+  count  = var.enable_additional_policy ? 1 : 0
+  name   = "additional"
+  role   = aws_iam_role.execution.id
+  policy = var.additional_policy_json
 }
 
-resource "aws_sfn_state_machine" "pipeline" {
-  name     = "${var.project_name}-pipeline"
-  role_arn = aws_iam_role.sfn_execution.arn
-
-  definition = var.state_machine_definition
+resource "aws_sfn_state_machine" "this" {
+  name       = "${var.project_name}-pipeline"
+  role_arn   = aws_iam_role.execution.arn
+  definition = var.definition
+  tags       = var.tags
 
   logging_configuration {
-    log_destination        = "${aws_cloudwatch_log_group.pipeline.arn}:*"
+    log_destination        = "${aws_cloudwatch_log_group.this.arn}:*"
     include_execution_data = true
     level                  = "ALL"
   }
-
-  tags = var.tags
 }
 
-resource "aws_cloudwatch_event_rule" "s3_upload" {
+resource "aws_cloudwatch_event_rule" "trigger" {
   name = "${var.project_name}-s3-upload-trigger"
+  tags = var.tags
 
   event_pattern = jsonencode({
     source      = ["aws.s3"]
     detail-type = ["Object Created"]
     detail = {
       bucket = {
-        name = [var.s3_bucket_name]
+        name = [var.source_bucket_name]
       }
       object = {
         key = [{
-          prefix = var.s3_key_prefix
+          prefix = var.object_key_prefix
         }]
       }
     }
   })
-
-  tags = var.tags
 }
 
-resource "aws_iam_role" "eventbridge_sfn" {
+resource "aws_cloudwatch_event_target" "trigger" {
+  rule      = aws_cloudwatch_event_rule.trigger.name
+  target_id = "start-pipeline"
+  arn       = aws_sfn_state_machine.this.arn
+  role_arn  = aws_iam_role.eventbridge.arn
+}
+
+resource "aws_iam_role" "eventbridge" {
   name = "${var.project_name}-eventbridge-sfn"
+  tags = var.tags
 
   assume_role_policy = jsonencode({
     Version = "2012-10-17"
@@ -115,13 +109,11 @@ resource "aws_iam_role" "eventbridge_sfn" {
       }
     ]
   })
-
-  tags = var.tags
 }
 
-resource "aws_iam_role_policy" "eventbridge_sfn" {
-  name = "${var.project_name}-eventbridge-start-execution"
-  role = aws_iam_role.eventbridge_sfn.id
+resource "aws_iam_role_policy" "eventbridge" {
+  name = "start-execution"
+  role = aws_iam_role.eventbridge.id
 
   policy = jsonencode({
     Version = "2012-10-17"
@@ -129,15 +121,8 @@ resource "aws_iam_role_policy" "eventbridge_sfn" {
       {
         Effect   = "Allow"
         Action   = "states:StartExecution"
-        Resource = aws_sfn_state_machine.pipeline.arn
+        Resource = aws_sfn_state_machine.this.arn
       }
     ]
   })
-}
-
-resource "aws_cloudwatch_event_target" "start_pipeline" {
-  rule      = aws_cloudwatch_event_rule.s3_upload.name
-  target_id = "start-pipeline"
-  arn       = aws_sfn_state_machine.pipeline.arn
-  role_arn  = aws_iam_role.eventbridge_sfn.arn
 }

@@ -193,8 +193,8 @@ modules/mcp-server/
 |------|---------|
 | `src/__init__.py` | Package marker with `__version__` |
 | `src/__main__.py` | Entry point: configure logging, validate config, run `mcp.run()` |
-| `src/server.py` | FastMCP server setup, register prompts |
-| `src/tools.py` | Tool function definitions registered with `@mcp.tool()` |
+| `src/server.py` | Creates `mcp = FastMCP(...)`, registers prompts with `@mcp.prompt()`, exports `mcp` |
+| `src/tools.py` | Imports `mcp` from `server.py`, registers tool functions with `@mcp.tool()` |
 | `src/config.py` | pydantic-settings `Settings` class with `API_ENDPOINT` and `API_KEY` |
 | `src/api_client.py` | `ApiClient` class wrapping httpx calls to the Question API |
 | `src/prompts.py` | Prompt string constants for `video_knowledge_overview`, `example_questions`, `formatting_guidance` |
@@ -249,7 +249,7 @@ With speaker filter:
 
 ### Part D: Tools (tools.py)
 
-Creates `mcp = FastMCP("video-knowledge")` at module level.
+Imports `mcp` from `server.py`.
 
 Each tool function:
 1. Validates input (empty question raises `ValueError`)
@@ -288,7 +288,7 @@ Error handling in production RAG systems requires...
 
 ### Part E: Server and Entry Point
 
-**server.py:** Imports `mcp` from `tools.py`, registers three prompts using `@mcp.prompt()` decorators. Exports `mcp`.
+**server.py:** Creates `mcp = FastMCP("video-knowledge")` at module level, registers three prompts using `@mcp.prompt()` decorators. Exports `mcp`.
 
 **__main__.py:**
 1. Configure logging to stderr at INFO level
@@ -315,7 +315,6 @@ pydantic-settings>=2.0.0
 ```
 pytest>=7.4.0
 pytest-asyncio>=0.21.0
-respx>=0.20.0
 ```
 
 ---
@@ -352,7 +351,7 @@ respx>=0.20.0
 | `test_list_indexed_videos_returns_formatted_table` | Mock `ApiClient.list_videos`, call tool function, verify markdown table output |
 | `test_search_by_speaker_passes_speaker_filter` | Mock `ApiClient.ask`, call tool function with speaker, verify speaker passed to API |
 
-**Fixture pattern:** Use `respx` to mock httpx requests at the HTTP level. Use `monkeypatch` to set environment variables before creating `Settings`.
+**Fixture pattern:** Use `unittest.mock.patch` to mock `httpx.AsyncClient` methods. Use `monkeypatch` to set environment variables before creating `Settings`.
 
 ---
 
@@ -364,10 +363,11 @@ After the MCP server is installed, add to Cursor MCP settings (`.cursor/mcp.json
 {
   "mcpServers": {
     "video-knowledge": {
-      "command": "python",
+      "command": "<absolute-path-to>/modules/mcp-server/.venv/bin/python",
       "args": ["-m", "src"],
       "cwd": "<absolute-path-to>/modules/mcp-server",
       "env": {
+        "PYTHONPATH": "<absolute-path-to>/modules/mcp-server",
         "API_ENDPOINT": "https://<api-gateway-id>.execute-api.us-east-1.amazonaws.com/prod",
         "API_KEY": "<question-api-key>"
       }
@@ -375,6 +375,12 @@ After the MCP server is installed, add to Cursor MCP settings (`.cursor/mcp.json
   }
 }
 ```
+
+> **Note:** Two non-obvious requirements from real-world testing:
+>
+> 1. **Use the venv Python directly** — set `command` to the absolute path of `.venv/bin/python` rather than `python`. Cursor spawns MCP servers as plain processes without activating the virtual environment, so the system `python` will not have `fastmcp`, `httpx`, or `pydantic-settings` installed.
+>
+> 2. **Set `PYTHONPATH` explicitly** — Cursor does not reliably apply the `cwd` field when spawning the process, so `python -m src` fails with `No module named src`. Adding `PYTHONPATH` pointing to the `modules/mcp-server` directory guarantees Python can locate the `src` package regardless of the working directory Cursor uses.
 
 Get the values from Terraform:
 
@@ -396,8 +402,8 @@ terraform output -raw question_api_key    # → API_KEY
 - [ ] 6. Create `modules/mcp-server/src/api_client.py` with `ApiClient` class
 - [ ] 7. Create `modules/mcp-server/tests/unit/test_config.py`
 - [ ] 8. Create `modules/mcp-server/tests/unit/test_api_client.py`
-- [ ] 9. Create `modules/mcp-server/src/tools.py` with three `@mcp.tool()` functions
-- [ ] 10. Create `modules/mcp-server/src/server.py` registering prompts
+- [ ] 9. Create `modules/mcp-server/src/server.py` creating `mcp = FastMCP("video-knowledge")` and registering prompts
+- [ ] 10. Create `modules/mcp-server/src/tools.py` with three `@mcp.tool()` functions (imports `mcp` from `server.py`)
 - [ ] 11. Create `modules/mcp-server/src/__main__.py` entry point
 - [ ] 12. Create `modules/mcp-server/tests/unit/test_tools.py`
 - [ ] 13. Run `pip install -r requirements.txt -r dev-requirements.txt && python -m pytest tests/ -v` — all tests pass

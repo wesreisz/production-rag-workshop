@@ -1,10 +1,8 @@
 # Embedding Endpoint
 
-A public HTTPS Lambda endpoint that generates 256-dimensional embedding vectors using Amazon Bedrock Titan Text Embeddings V2. Workshop participants use this to generate embeddings for pgvector similarity queries in the RDS Query Editor.
+A public HTTPS endpoint that generates 256-dimensional embeddings via Amazon Bedrock Titan Text Embeddings V2. Use this during the workshop to generate embeddings interactively and run similarity searches against pgvector.
 
-## Setup
-
-After `terraform apply`, get the endpoint URL and API key:
+## Get the URL and API key
 
 ```bash
 cd infra/environments/dev
@@ -12,7 +10,7 @@ EMBED_URL=$(terraform output -raw embed_text_endpoint_url)
 API_KEY=$(terraform output -raw embed_text_api_key)
 ```
 
-## Generate an Embedding
+## Generate an embedding
 
 ```bash
 curl -s -X POST "$EMBED_URL" \
@@ -21,45 +19,7 @@ curl -s -X POST "$EMBED_URL" \
   -d '{"text": "What did Wes talk about?"}' | python3 -m json.tool
 ```
 
-To copy just the embedding array to your clipboard (macOS):
-
-```bash
-curl -s -X POST "$EMBED_URL" \
-  -H "Content-Type: application/json" \
-  -H "x-api-key: $API_KEY" \
-  -d '{"text": "What did Wes talk about?"}' | jq -r '.embedding' | pbcopy
-```
-
-## Similarity Search in RDS Query Editor
-
-Paste the embedding into a query using a CTE so you only paste it once:
-
-```sql
-WITH query AS (
-  SELECT '<paste_embedding_here>'::vector AS embedding
-)
-SELECT chunk_id, left(text, 80) AS text_preview,
-       1 - (v.embedding <=> q.embedding) AS similarity
-FROM video_chunks v, query q
-ORDER BY v.embedding <=> q.embedding
-LIMIT 5;
-```
-
-Results are sorted by cosine similarity (closer to 1 = more similar).
-
-## API Reference
-
-**Request:**
-
-```
-POST <EMBED_URL>
-Content-Type: application/json
-x-api-key: <API_KEY>
-
-{"text": "your text here"}
-```
-
-**Response (200):**
+Expected response:
 
 ```json
 {
@@ -69,10 +29,46 @@ x-api-key: <API_KEY>
 }
 ```
 
-**Errors:**
+## Use the embedding for similarity search
+
+1. Copy the `embedding` array from the curl response
+2. Open the AWS Console → RDS → Query Editor
+3. Connect to `production-rag-vectordb` / `ragdb` using the Secrets Manager secret ARN
+4. Run:
+
+```sql
+SELECT chunk_id, left(text, 80) AS text_preview,
+       1 - (embedding <=> '<paste_embedding_here>'::vector) AS similarity
+FROM video_chunks
+ORDER BY embedding <=> '<paste_embedding_here>'::vector
+LIMIT 5;
+```
+
+Or use the AWS CLI Data API:
+
+```bash
+SECRET_ARN=$(terraform output -raw aurora_secret_arn)
+CLUSTER_ARN=$(aws rds describe-db-clusters \
+  --query "DBClusters[?contains(DBClusterIdentifier,'production-rag')].DBClusterArn" \
+  --output text)
+
+EMBEDDING=$(curl -s -X POST "$EMBED_URL" \
+  -H "Content-Type: application/json" \
+  -H "x-api-key: $API_KEY" \
+  -d '{"text": "What did Wes talk about?"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['embedding'])")
+
+aws rds-data execute-statement \
+  --resource-arn "$CLUSTER_ARN" \
+  --secret-arn "$SECRET_ARN" \
+  --database "ragdb" \
+  --sql "SELECT chunk_id, left(text, 80) FROM video_chunks ORDER BY embedding <=> '$EMBEDDING'::vector LIMIT 5;"
+```
+
+## Error responses
 
 | Status | Body | Cause |
 |--------|------|-------|
-| 401 | `{"error": "unauthorized"}` | Missing or invalid `x-api-key` header |
-| 400 | `{"error": "text field is required"}` | Missing or empty `text` field |
-| 500 | `{"error": "<message>"}` | Bedrock invocation failure |
+| 401 | `{"error": "unauthorized"}` | Missing or wrong `x-api-key` header |
+| 400 | `{"error": "text field is required"}` | Missing or empty `text` in body |
+| 400 | `{"error": "body is required"}` | No request body |
+| 500 | `{"error": "internal error"}` | Bedrock failure |

@@ -4,7 +4,7 @@ variable "function_name" {
 }
 
 variable "handler" {
-  description = "Lambda handler path (e.g. src.handlers.start_transcription.handler)"
+  description = "Handler path (e.g. src.handlers.start_transcription.handler)"
   type        = string
 }
 
@@ -15,24 +15,24 @@ variable "runtime" {
 }
 
 variable "timeout" {
-  description = "Lambda timeout in seconds"
+  description = "Timeout in seconds"
   type        = number
   default     = 30
 }
 
 variable "memory_size" {
-  description = "Lambda memory in MB"
+  description = "Memory in MB"
   type        = number
   default     = 256
 }
 
 variable "source_dir" {
-  description = "Path to the source directory to zip for Lambda deployment"
+  description = "Absolute path to Python source directory to zip"
   type        = string
 }
 
 variable "environment_variables" {
-  description = "Environment variables for the Lambda function"
+  description = "Environment variables"
   type        = map(string)
   default     = {}
 }

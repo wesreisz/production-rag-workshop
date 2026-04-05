@@ -6,59 +6,39 @@ from pydantic import ValidationError
 from src import __version__
 from src.config import get_settings
 from src.server import mcp
+import src.tools  # noqa: F401 — registers @mcp.tool() decorators
+
+
+def _configure_logging() -> None:
+    logging.basicConfig(stream=sys.stderr, level=logging.INFO)
+
 
 logger = logging.getLogger(__name__)
 
 
-def configure_logging() -> None:
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-        datefmt="%Y-%m-%d %H:%M:%S",
-        stream=sys.stderr,
-    )
-
-
 def main() -> None:
-    configure_logging()
-
-    logger.info(f"Starting video-knowledge MCP Server v{__version__}")
+    _configure_logging()
+    logger.info("Starting video-knowledge MCP Server v%s", __version__)
 
     try:
         get_settings()
-        logger.info("Configuration validated successfully")
     except ValidationError as e:
-        logger.error("Configuration validation failed")
-        missing_fields = []
-        for error in e.errors():
-            field = error["loc"][0] if error["loc"] else "unknown"
-            missing_fields.append(field)
-
+        missing = [err["loc"][0] for err in e.errors()]
         print(
-            "\nError: Missing required configuration\n",
+            f"Configuration error: missing or invalid environment variables: {', '.join(str(f) for f in missing)}\n"
+            "Set the following before starting the server:\n"
+            "  API_ENDPOINT  — Question API base URL (e.g. https://....execute-api.us-east-1.amazonaws.com/prod)\n"
+            "  API_KEY       — API Gateway API key",
             file=sys.stderr,
         )
-        print("Missing environment variables:", file=sys.stderr)
-        for field in missing_fields:
-            print(f"  - {field}", file=sys.stderr)
-
-        print(
-            "\nConfigure in Cursor MCP settings with API_ENDPOINT and API_KEY.",
-            file=sys.stderr,
-        )
-        print("See specs/06-mcp-server/001_mcp_server.md for details.\n", file=sys.stderr)
         sys.exit(1)
 
     try:
-        logger.info("Starting MCP server...")
         mcp.run()
     except KeyboardInterrupt:
-        logger.info("Received shutdown signal")
-        logger.info("Server shutdown complete")
         sys.exit(0)
-    except Exception as e:
-        logger.error(f"Server error: {e}")
-        print(f"\nError: Server failed to start: {e}\n", file=sys.stderr)
+    except Exception:
+        logger.exception("Unexpected error, server shutting down")
         sys.exit(1)
 
 

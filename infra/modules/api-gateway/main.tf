@@ -27,13 +27,19 @@ resource "aws_api_gateway_resource" "video_ask" {
   path_part   = "ask"
 }
 
+resource "aws_api_gateway_resource" "video_presign" {
+  rest_api_id = aws_api_gateway_rest_api.this.id
+  parent_id   = aws_api_gateway_resource.video_id.id
+  path_part   = "presign"
+}
+
 resource "aws_api_gateway_resource" "health" {
   rest_api_id = aws_api_gateway_rest_api.this.id
   parent_id   = aws_api_gateway_rest_api.this.root_resource_id
   path_part   = "health"
 }
 
-resource "aws_api_gateway_method" "ask_post" {
+resource "aws_api_gateway_method" "post_ask" {
   rest_api_id      = aws_api_gateway_rest_api.this.id
   resource_id      = aws_api_gateway_resource.ask.id
   http_method      = "POST"
@@ -41,7 +47,7 @@ resource "aws_api_gateway_method" "ask_post" {
   api_key_required = true
 }
 
-resource "aws_api_gateway_method" "videos_get" {
+resource "aws_api_gateway_method" "get_videos" {
   rest_api_id      = aws_api_gateway_rest_api.this.id
   resource_id      = aws_api_gateway_resource.videos.id
   http_method      = "GET"
@@ -49,7 +55,7 @@ resource "aws_api_gateway_method" "videos_get" {
   api_key_required = true
 }
 
-resource "aws_api_gateway_method" "video_ask_post" {
+resource "aws_api_gateway_method" "post_video_ask" {
   rest_api_id      = aws_api_gateway_rest_api.this.id
   resource_id      = aws_api_gateway_resource.video_ask.id
   http_method      = "POST"
@@ -57,7 +63,7 @@ resource "aws_api_gateway_method" "video_ask_post" {
   api_key_required = true
 }
 
-resource "aws_api_gateway_method" "health_get" {
+resource "aws_api_gateway_method" "get_health" {
   rest_api_id      = aws_api_gateway_rest_api.this.id
   resource_id      = aws_api_gateway_resource.health.id
   http_method      = "GET"
@@ -65,48 +71,74 @@ resource "aws_api_gateway_method" "health_get" {
   api_key_required = true
 }
 
-resource "aws_api_gateway_integration" "ask_post" {
+resource "aws_api_gateway_method" "get_video_presign" {
+  rest_api_id      = aws_api_gateway_rest_api.this.id
+  resource_id      = aws_api_gateway_resource.video_presign.id
+  http_method      = "GET"
+  authorization    = "NONE"
+  api_key_required = true
+}
+
+resource "aws_api_gateway_integration" "post_ask" {
   rest_api_id             = aws_api_gateway_rest_api.this.id
   resource_id             = aws_api_gateway_resource.ask.id
-  http_method             = aws_api_gateway_method.ask_post.http_method
-  integration_http_method = "POST"
+  http_method             = aws_api_gateway_method.post_ask.http_method
   type                    = "AWS_PROXY"
+  integration_http_method = "POST"
   uri                     = var.lambda_invoke_arn
 }
 
-resource "aws_api_gateway_integration" "videos_get" {
+resource "aws_api_gateway_integration" "get_videos" {
   rest_api_id             = aws_api_gateway_rest_api.this.id
   resource_id             = aws_api_gateway_resource.videos.id
-  http_method             = aws_api_gateway_method.videos_get.http_method
-  integration_http_method = "POST"
+  http_method             = aws_api_gateway_method.get_videos.http_method
   type                    = "AWS_PROXY"
+  integration_http_method = "POST"
   uri                     = var.lambda_invoke_arn
 }
 
-resource "aws_api_gateway_integration" "video_ask_post" {
+resource "aws_api_gateway_integration" "post_video_ask" {
   rest_api_id             = aws_api_gateway_rest_api.this.id
   resource_id             = aws_api_gateway_resource.video_ask.id
-  http_method             = aws_api_gateway_method.video_ask_post.http_method
-  integration_http_method = "POST"
+  http_method             = aws_api_gateway_method.post_video_ask.http_method
   type                    = "AWS_PROXY"
+  integration_http_method = "POST"
   uri                     = var.lambda_invoke_arn
 }
 
-resource "aws_api_gateway_integration" "health_get" {
+resource "aws_api_gateway_integration" "get_health" {
   rest_api_id             = aws_api_gateway_rest_api.this.id
   resource_id             = aws_api_gateway_resource.health.id
-  http_method             = aws_api_gateway_method.health_get.http_method
-  integration_http_method = "POST"
+  http_method             = aws_api_gateway_method.get_health.http_method
   type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = var.lambda_invoke_arn
+}
+
+resource "aws_api_gateway_integration" "get_video_presign" {
+  rest_api_id             = aws_api_gateway_rest_api.this.id
+  resource_id             = aws_api_gateway_resource.video_presign.id
+  http_method             = aws_api_gateway_method.get_video_presign.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
   uri                     = var.lambda_invoke_arn
 }
 
 resource "aws_api_gateway_api_key" "this" {
   name    = "${var.api_name}-key"
   enabled = true
+  tags    = var.tags
 }
 
 resource "aws_api_gateway_deployment" "this" {
+  depends_on = [
+    aws_api_gateway_integration.post_ask,
+    aws_api_gateway_integration.get_videos,
+    aws_api_gateway_integration.post_video_ask,
+    aws_api_gateway_integration.get_health,
+    aws_api_gateway_integration.get_video_presign,
+  ]
+
   rest_api_id = aws_api_gateway_rest_api.this.id
 
   triggers = {
@@ -116,38 +148,35 @@ resource "aws_api_gateway_deployment" "this" {
       aws_api_gateway_resource.video_id,
       aws_api_gateway_resource.video_ask,
       aws_api_gateway_resource.health,
-      aws_api_gateway_method.ask_post,
-      aws_api_gateway_method.videos_get,
-      aws_api_gateway_method.video_ask_post,
-      aws_api_gateway_method.health_get,
-      aws_api_gateway_integration.ask_post,
-      aws_api_gateway_integration.videos_get,
-      aws_api_gateway_integration.video_ask_post,
-      aws_api_gateway_integration.health_get,
+      aws_api_gateway_resource.video_presign,
+      aws_api_gateway_method.post_ask,
+      aws_api_gateway_method.get_videos,
+      aws_api_gateway_method.post_video_ask,
+      aws_api_gateway_method.get_health,
+      aws_api_gateway_method.get_video_presign,
+      aws_api_gateway_integration.post_ask,
+      aws_api_gateway_integration.get_videos,
+      aws_api_gateway_integration.post_video_ask,
+      aws_api_gateway_integration.get_health,
+      aws_api_gateway_integration.get_video_presign,
     ]))
   }
 
   lifecycle {
     create_before_destroy = true
   }
-
-  depends_on = [
-    aws_api_gateway_integration.ask_post,
-    aws_api_gateway_integration.videos_get,
-    aws_api_gateway_integration.video_ask_post,
-    aws_api_gateway_integration.health_get,
-  ]
 }
 
 resource "aws_api_gateway_stage" "this" {
-  deployment_id = aws_api_gateway_deployment.this.id
   rest_api_id   = aws_api_gateway_rest_api.this.id
+  deployment_id = aws_api_gateway_deployment.this.id
   stage_name    = var.stage_name
   tags          = var.tags
 }
 
 resource "aws_api_gateway_usage_plan" "this" {
   name = "${var.api_name}-usage-plan"
+  tags = var.tags
 
   api_stages {
     api_id = aws_api_gateway_rest_api.this.id
@@ -163,8 +192,6 @@ resource "aws_api_gateway_usage_plan" "this" {
     limit  = 10000
     period = "DAY"
   }
-
-  tags = var.tags
 }
 
 resource "aws_api_gateway_usage_plan_key" "this" {
