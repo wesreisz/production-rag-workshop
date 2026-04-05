@@ -149,8 +149,29 @@ else
 fi
 
 echo ""
-echo "=== 8. Wait for embedding Lambda to process (60s) ==="
-sleep 60
+echo "=== 8. Wait for embedding Lambda to process ==="
+QUEUE_URL_WAIT=$(terraform -chdir="$TF_DIR" output -raw embedding_queue_url)
+WAIT_TIMEOUT=120
+WAIT_ELAPSED=0
+WAIT_INTERVAL=5
+echo "  Polling SQS queue every ${WAIT_INTERVAL}s (max ${WAIT_TIMEOUT}s)..."
+while [ "$WAIT_ELAPSED" -lt "$WAIT_TIMEOUT" ]; do
+  VISIBLE=$(aws sqs get-queue-attributes \
+    --queue-url "$QUEUE_URL_WAIT" \
+    --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible \
+    --query "Attributes.ApproximateNumberOfMessages" --output text)
+  INFLIGHT=$(aws sqs get-queue-attributes \
+    --queue-url "$QUEUE_URL_WAIT" \
+    --attribute-names ApproximateNumberOfMessages ApproximateNumberOfMessagesNotVisible \
+    --query "Attributes.ApproximateNumberOfMessagesNotVisible" --output text)
+  echo "  ${WAIT_ELAPSED}s — visible=${VISIBLE}, inflight=${INFLIGHT}"
+  if [ "$VISIBLE" = "0" ] && [ "$INFLIGHT" = "0" ]; then
+    echo "  Queue drained after ${WAIT_ELAPSED}s"
+    break
+  fi
+  sleep "$WAIT_INTERVAL"
+  WAIT_ELAPSED=$((WAIT_ELAPSED + WAIT_INTERVAL))
+done
 
 echo ""
 echo "=== 9. Verify SQS queue is drained ==="
@@ -276,6 +297,16 @@ else
   else
     fail "Expected 400, got HTTP $RESPONSE_400: $(cat /tmp/embed_400.json 2>/dev/null)"
   fi
+
+  echo ""
+  echo "  To run these manually:"
+  echo ""
+  echo "  # Returns 256-dim embedding vector:"
+  echo "  curl -s -X POST \"$EMBED_URL\" \\"
+  echo "    -H \"Content-Type: application/json\" \\"
+  echo "    -H \"x-api-key: $EMBED_KEY\" \\"
+  echo "    -d '{\"text\": \"What did Wes talk about?\"}' | python3 -m json.tool"
+  echo ""
 fi
 
 if [ "$FAIL_COUNT" -gt 0 ]; then
