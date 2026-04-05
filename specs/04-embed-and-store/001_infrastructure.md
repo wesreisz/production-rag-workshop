@@ -211,7 +211,7 @@ infra/modules/aurora-vectordb/
 | `aws_db_subnet_group.aurora` | Subnet group | `name` = `${var.project_name}-aurora`, `subnet_ids` = `var.subnet_ids` |
 | `aws_rds_cluster.this` | Aurora cluster | `cluster_identifier` = `${var.project_name}-vectordb`, `engine` = `aurora-postgresql`, `engine_version` = `17.7`, `database_name` = `var.db_name`, `master_username` = `var.master_username`, `master_password` = `var.master_password`, `db_subnet_group_name` = subnet group, `vpc_security_group_ids` = `[var.security_group_id]`, `skip_final_snapshot` = `true`, `apply_immediately` = `true`, `enable_http_endpoint` = `true` |
 | `aws_rds_cluster.this` | Serverless v2 scaling | `serverless_v2_scaling_configuration { min_capacity = 0.5, max_capacity = 4 }` |
-| `aws_rds_cluster_instance.this` | Cluster instance | `cluster_identifier` = cluster, `instance_class` = `db.serverless`, `engine` = `aurora-postgresql` |
+| `aws_rds_cluster_instance.this` | Cluster instance | `identifier` = `${var.project_name}-vectordb-instance`, `cluster_identifier` = cluster, `instance_class` = `db.serverless`, `engine` = `aurora-postgresql` |
 | `aws_secretsmanager_secret.db` | Secret | `name` = `${var.project_name}-aurora-credentials` |
 | `aws_secretsmanager_secret_version.db` | Secret value | JSON: `{host, port, dbname, username, password}` from cluster endpoint and variables |
 
@@ -472,7 +472,7 @@ resource "aws_lambda_layer_version" "psycopg2" {
 - [ ] 2. Create `infra/modules/networking/main.tf` with default VPC data source, subnets data source, route tables data source, Lambda security group, Aurora security group, S3 gateway endpoint, Bedrock interface endpoint (single AZ), Secrets Manager interface endpoint (single AZ)
 - [ ] 3. Create `infra/modules/networking/outputs.tf` with `vpc_id`, `subnet_ids`, `lambda_security_group_id`, `aurora_security_group_id`
 - [ ] 4. Create `infra/modules/aurora-vectordb/variables.tf` with `project_name`, `subnet_ids`, `security_group_id`, `db_name`, `master_username`, `master_password`, `tags`
-- [ ] 5. Create `infra/modules/aurora-vectordb/main.tf` with DB subnet group, Aurora cluster (aurora-postgresql 17.7, serverless v2 0.5–4 ACU), cluster instance (db.serverless), Secrets Manager secret and version
+- [ ] 5. Create `infra/modules/aurora-vectordb/main.tf` with DB subnet group, Aurora cluster (aurora-postgresql 17.7, serverless v2 0.5–4 ACU), cluster instance (db.serverless, identifier = `${var.project_name}-vectordb-instance`), Secrets Manager secret and version
 - [ ] 6. Create `infra/modules/aurora-vectordb/outputs.tf` with `cluster_endpoint`, `cluster_port`, `secret_arn`, `cluster_arn`, `db_name`
 - [ ] 7. Create `infra/modules/lambda-vpc/variables.tf` (all variables from `infra/modules/lambda/variables.tf` plus `subnet_ids`, `security_group_ids`, `layers`)
 - [ ] 8. Create `infra/modules/lambda-vpc/main.tf` (copy of `infra/modules/lambda/main.tf` plus `vpc_config` block, `layers` attribute, `AWSLambdaVPCAccessExecutionRole` policy attachment)

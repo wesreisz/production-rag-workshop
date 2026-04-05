@@ -6,6 +6,29 @@ provider "aws" {
   }
 }
 
+module "networking" {
+  source       = "../../modules/networking"
+  project_name = var.project_name
+  aws_region   = var.aws_region
+  tags         = local.common_tags
+}
+
+module "aurora_vectordb" {
+  source            = "../../modules/aurora-vectordb"
+  project_name      = var.project_name
+  subnet_ids        = module.networking.subnet_ids
+  security_group_id = module.networking.aurora_security_group_id
+  master_password   = var.aurora_master_password
+  tags              = local.common_tags
+}
+
+resource "aws_lambda_layer_version" "psycopg2" {
+  layer_name          = "${var.project_name}-psycopg2"
+  filename            = "${path.module}/../../../layers/psycopg2/psycopg2-layer.zip"
+  compatible_runtimes = ["python3.11"]
+  source_code_hash    = filebase64sha256("${path.module}/../../../layers/psycopg2/psycopg2-layer.zip")
+}
+
 module "media_bucket" {
   source = "../../modules/s3"
 
@@ -135,6 +158,74 @@ module "chunk_transcript" {
       }
     ]
   })
+}
+
+resource "null_resource" "build_migration_deps" {
+  triggers = {
+    migration_files = sha256(join("", [
+      filesha256("${path.module}/../../../modules/migration-module/migrations/versions/001_initial_schema.py"),
+      filesha256("${path.module}/../../../modules/migration-module/requirements.txt"),
+    ]))
+  }
+
+  provisioner "local-exec" {
+    command = "${path.module}/../../../scripts/build-migration-module.sh"
+  }
+}
+
+module "run_migrations" {
+  source = "../../modules/lambda-vpc"
+
+  depends_on = [null_resource.build_migration_deps, module.aurora_vectordb]
+
+  function_name = "${var.project_name}-run-migrations"
+  handler       = "src.handlers.run_migrations.handler"
+  timeout       = 300
+  memory_size   = 256
+  source_dir    = "${path.module}/../../../modules/migration-module"
+  subnet_ids    = module.networking.subnet_ids
+  security_group_ids = [module.networking.lambda_security_group_id]
+  layers        = [aws_lambda_layer_version.psycopg2.arn]
+  tags          = local.common_tags
+
+  environment_variables = {
+    SECRET_ARN = module.aurora_vectordb.secret_arn
+    DB_NAME    = module.aurora_vectordb.db_name
+  }
+
+  policy_statements = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = module.aurora_vectordb.secret_arn
+      }
+    ]
+  })
+}
+
+resource "null_resource" "run_migrations" {
+  depends_on = [module.run_migrations, module.aurora_vectordb]
+
+  triggers = {
+    handler_hash = filesha256("${path.module}/../../../modules/migration-module/src/handlers/run_migrations.py")
+    versions_hash = sha256(join("", [
+      filesha256("${path.module}/../../../modules/migration-module/migrations/versions/001_initial_schema.py"),
+    ]))
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws lambda invoke \
+        --function-name ${module.run_migrations.function_name} \
+        --payload '{}' \
+        --cli-binary-format raw-in-base64-out \
+        --cli-read-timeout 300 \
+        /tmp/migration-response.json
+      cat /tmp/migration-response.json
+    EOT
+  }
 }
 
 module "pipeline" {
