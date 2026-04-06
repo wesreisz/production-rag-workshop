@@ -120,25 +120,41 @@ class TestSearchSimilar:
         # Act
         svc.search_similar(embedding, top_k=5)
 
-        # Assert
+        # Assert — base SQL has no video_id or speaker WHERE clause filter
         executed_sql = cursor.execute.call_args[0][0]
-        assert "WHERE" not in executed_sql
+        assert "video_id = %(video_id)s" not in executed_sql
+        assert "speaker = %(speaker)s" not in executed_sql
 
-    def test_search_similar_filters_below_threshold(self):
-        # Arrange
-        low_similarity_row = SAMPLE_ROW[:8] + (0.3,)
+    def test_search_respects_similarity_threshold(self):
+        # Arrange — mock cursor simulates DB returning only rows above threshold
         high_similarity_row = SAMPLE_ROW[:8] + (0.9,)
         svc = RetrievalService()
-        cursor = _make_cursor([low_similarity_row, high_similarity_row])
+        cursor = _make_cursor([high_similarity_row])
         svc._db_conn = _make_conn(cursor)
         embedding = [0.01] * 256
 
         # Act
         results = svc.search_similar(embedding, top_k=5, similarity_threshold=0.5)
 
-        # Assert
+        # Assert — all rows returned by cursor are passed through
         assert len(results) == 1
         assert results[0]["similarity"] == 0.9
+
+    def test_search_threshold_in_sql_params(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_cursor([SAMPLE_ROW])
+        svc._db_conn = _make_conn(cursor)
+        embedding = [0.01] * 256
+
+        # Act
+        svc.search_similar(embedding, top_k=5, similarity_threshold=0.75)
+
+        # Assert — similarity_threshold is passed as a SQL parameter, not filtered in Python
+        executed_params = cursor.execute.call_args[0][1]
+        assert isinstance(executed_params, dict)
+        assert executed_params["similarity_threshold"] == 0.75
+        assert executed_params["top_k"] == 5
 
     def test_search_similar_with_video_id_filter(self):
         # Arrange

@@ -13,10 +13,14 @@ resource "aws_rds_cluster" "this" {
   master_password        = var.master_password
   db_subnet_group_name   = aws_db_subnet_group.aurora.name
   vpc_security_group_ids = [var.security_group_id]
-  skip_final_snapshot    = true
-  apply_immediately      = true
-  enable_http_endpoint   = true
-  tags                   = var.tags
+  # WARNING: skip_final_snapshot=true means terraform destroy permanently deletes all data.
+  # Set enable_deletion_protection=true for any non-throwaway environment.
+  skip_final_snapshot       = !var.enable_deletion_protection
+  final_snapshot_identifier = var.enable_deletion_protection ? "${var.project_name}-final-snapshot" : null
+  deletion_protection       = var.enable_deletion_protection
+  apply_immediately         = true
+  enable_http_endpoint      = true
+  tags                      = var.tags
 
   serverlessv2_scaling_configuration {
     min_capacity = 0.5
@@ -34,8 +38,10 @@ resource "aws_rds_cluster_instance" "this" {
 }
 
 resource "aws_secretsmanager_secret" "db" {
-  name                    = "${var.project_name}-aurora-credentials"
-  recovery_window_in_days = 0
+  name = "${var.project_name}-aurora-credentials"
+  # WARNING: recovery_window_in_days=0 allows immediate permanent secret deletion.
+  # Set enable_deletion_protection=true for any non-throwaway environment.
+  recovery_window_in_days = var.enable_deletion_protection ? 30 : 0
   tags                    = var.tags
 }
 

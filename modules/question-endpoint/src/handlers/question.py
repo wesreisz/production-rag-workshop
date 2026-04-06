@@ -25,7 +25,10 @@ def _response(status_code, body):
 
 def _parse_post_body(event):
     raw_body = event.get("body") or "{}"
-    return json.loads(raw_body)
+    try:
+        return json.loads(raw_body)
+    except json.JSONDecodeError:
+        raise ValueError("request body must be valid JSON")
 
 
 def _validate_ask_params(body):
@@ -140,6 +143,9 @@ def handler(event, context):
             return _handle_presign(event)
 
         return _response(404, {"error": "not found"})
+
+    except ValueError as e:
+        return _response(400, {"error": str(e)})
 
     except Exception:
         logger.exception("Unhandled error in question handler")
