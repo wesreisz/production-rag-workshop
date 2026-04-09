@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+FILES=()
+while IFS= read -r file; do
+  [[ -z "$file" ]] && continue
+  FILES+=("$file")
+done < <(git diff --cached --name-only --diff-filter=ACM -- '*.py' | \
+  grep -v '/typing_extensions\.py$' | \
+  grep -v '/deps/' | \
+  grep -v '/vendor/' | \
+  grep -v '/\.venv/' || true)
+
+if [ ${#FILES[@]} -eq 0 ]; then
+  exit 0
+fi
+
+python3 "$REPO_ROOT/scripts/check_code_quality.py" "${FILES[@]}"
