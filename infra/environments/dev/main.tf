@@ -372,6 +372,12 @@ resource "aws_lambda_permission" "embed_text_public_url" {
   function_url_auth_type = "NONE"
 }
 
+resource "aws_lambda_permission" "embed_text_public_invoke" {
+  statement_id  = "FunctionURLInvokeAllowPublicAccess"
+  action        = "lambda:InvokeFunction"
+  function_name = module.embed_text_endpoint.function_name
+  principal     = "*"
+}
 
 module "pipeline" {
   source = "../../modules/step-functions"
