@@ -277,6 +277,17 @@ echo "========================================="
 echo "  Results: $PASS_COUNT passed, $FAIL_COUNT failed"
 echo "========================================="
 
+BUCKET=$(terraform -chdir="$TF_DIR" output -raw media_bucket_name 2>/dev/null || echo "")
+
+if [ -n "$BUCKET" ]; then
+  echo ""
+  echo "  Upload a video to trigger the pipeline:"
+  echo ""
+  echo "  aws s3 cp /path/to/video.mp3 s3://${BUCKET}/uploads/video.mp3 \\"
+  echo "    --metadata '{\"speaker\":\"Speaker Name\",\"title\":\"Video Title\"}'"
+  echo ""
+fi
+
 if [ -n "$API_URL" ] && [ -n "$API_KEY" ]; then
   echo ""
   echo "You can curl the question endpoint directly with:"
