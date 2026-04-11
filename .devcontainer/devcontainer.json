@@ -8,7 +8,7 @@
       "version": "lts"
     }
   },
-  "postCreateCommand": "bash .devcontainer/install-deps.sh",
+  "postCreateCommand": "git config --global --add safe.directory /workspaces/production-rag && bash .devcontainer/install-deps.sh",
   "customizations": {
     "vscode": {
       "extensions": [
