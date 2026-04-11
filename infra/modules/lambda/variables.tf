@@ -47,3 +47,15 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "excludes" {
+  description = "Glob patterns to exclude from the Lambda zip"
+  type        = list(string)
+  default = [
+    "**/.venv/**",
+    "**/.pytest_cache/**",
+    "**/__pycache__/**",
+    "**/tests/**",
+    "**/*.pyc",
+  ]
+}
