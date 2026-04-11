@@ -2,6 +2,7 @@ data "archive_file" "lambda" {
   type        = "zip"
   source_dir  = var.source_dir
   output_path = "/tmp/${var.function_name}.zip"
+  excludes    = var.excludes
 }
 
 resource "aws_lambda_function" "this" {
