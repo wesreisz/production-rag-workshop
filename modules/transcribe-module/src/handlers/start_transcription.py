@@ -14,6 +14,7 @@ def handler(event, context):
         logger.info("Starting transcription", extra={"request_id": request_id})
 
         video_id = service.derive_video_id(object_key)
+        metadata = service.get_object_metadata(bucket_name, object_key)
         result = service.start_job(bucket_name, object_key, video_id)
 
         return {
@@ -24,6 +25,8 @@ def handler(event, context):
                 "bucket_name": bucket_name,
                 "source_key": object_key,
                 "video_id": video_id,
+                "speaker": metadata["speaker"],
+                "title": metadata["title"],
                 "status": result["status"],
             },
         }

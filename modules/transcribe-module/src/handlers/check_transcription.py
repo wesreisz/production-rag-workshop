@@ -23,6 +23,8 @@ def handler(event, context):
                 "bucket_name": detail["bucket_name"],
                 "source_key": detail["source_key"],
                 "video_id": detail["video_id"],
+                "speaker": detail.get("speaker"),
+                "title": detail.get("title"),
                 "status": result["status"],
             },
         }

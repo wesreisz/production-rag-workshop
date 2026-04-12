@@ -20,6 +20,10 @@ class TestStartTranscriptionHandler:
         # Arrange
         mock_service = MagicMock()
         mock_service.derive_video_id.return_value = "my-video"
+        mock_service.get_object_metadata.return_value = {
+            "speaker": "Jane Doe",
+            "title": "Building RAG Systems",
+        }
         mock_service.start_job.return_value = {
             "job_name": "production-rag-my-video",
             "transcript_key": "transcripts/my-video/raw.json",
@@ -40,6 +44,8 @@ class TestStartTranscriptionHandler:
         assert detail["bucket_name"] == "test-bucket"
         assert detail["source_key"] == "uploads/my-video.mp4"
         assert detail["video_id"] == "my-video"
+        assert detail["speaker"] == "Jane Doe"
+        assert detail["title"] == "Building RAG Systems"
         assert detail["status"] == "IN_PROGRESS"
 
     def test_returns_400_on_value_error(self):
@@ -80,6 +86,8 @@ class TestCheckTranscriptionHandler:
                 "bucket_name": "test-bucket",
                 "source_key": "uploads/my-video.mp4",
                 "video_id": "my-video",
+                "speaker": "Jane Doe",
+                "title": "Building RAG Systems",
             }
         }
 
@@ -103,6 +111,8 @@ class TestCheckTranscriptionHandler:
         assert detail["bucket_name"] == "test-bucket"
         assert detail["source_key"] == "uploads/my-video.mp4"
         assert detail["video_id"] == "my-video"
+        assert detail["speaker"] == "Jane Doe"
+        assert detail["title"] == "Building RAG Systems"
 
     def test_returns_400_on_value_error(self):
         # Arrange

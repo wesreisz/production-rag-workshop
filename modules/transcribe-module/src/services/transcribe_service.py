@@ -4,8 +4,9 @@ import boto3
 
 
 class TranscribeService:
-    def __init__(self, transcribe_client=None):
+    def __init__(self, transcribe_client=None, s3_client=None):
         self._client = transcribe_client or boto3.client("transcribe")
+        self._s3 = s3_client or boto3.client("s3")
 
     def derive_video_id(self, s3_key):
         if "uploads/" not in s3_key:
@@ -34,6 +35,14 @@ class TranscribeService:
             "job_name": job_name,
             "transcript_key": transcript_key,
             "status": "IN_PROGRESS",
+        }
+
+    def get_object_metadata(self, bucket, key):
+        response = self._s3.head_object(Bucket=bucket, Key=key)
+        metadata = response.get("Metadata", {})
+        return {
+            "speaker": metadata.get("speaker"),
+            "title": metadata.get("title"),
         }
 
     def check_job(self, job_name):

@@ -60,6 +60,49 @@ class TestDetectMediaFormat:
         assert result == "mp4"
 
 
+class TestGetObjectMetadata:
+    def test_get_object_metadata_returns_speaker_and_title(self, mock_aws_services):
+        # Arrange
+        mock_aws_services["s3"].create_bucket(Bucket="test-bucket")
+        mock_aws_services["s3"].put_object(
+            Bucket="test-bucket",
+            Key="uploads/my-video.mp3",
+            Body=b"fake",
+            Metadata={"speaker": "Jane Doe", "title": "Building RAG Systems"},
+        )
+        service = TranscribeService(
+            transcribe_client=mock_aws_services["transcribe"],
+            s3_client=mock_aws_services["s3"],
+        )
+
+        # Act
+        result = service.get_object_metadata("test-bucket", "uploads/my-video.mp3")
+
+        # Assert
+        assert result["speaker"] == "Jane Doe"
+        assert result["title"] == "Building RAG Systems"
+
+    def test_get_object_metadata_returns_none_when_missing(self, mock_aws_services):
+        # Arrange
+        mock_aws_services["s3"].create_bucket(Bucket="test-bucket")
+        mock_aws_services["s3"].put_object(
+            Bucket="test-bucket",
+            Key="uploads/my-video.mp3",
+            Body=b"fake",
+        )
+        service = TranscribeService(
+            transcribe_client=mock_aws_services["transcribe"],
+            s3_client=mock_aws_services["s3"],
+        )
+
+        # Act
+        result = service.get_object_metadata("test-bucket", "uploads/my-video.mp3")
+
+        # Assert
+        assert result["speaker"] is None
+        assert result["title"] is None
+
+
 class TestStartJob:
     def test_start_job(self, mock_aws_services):
         # Arrange
