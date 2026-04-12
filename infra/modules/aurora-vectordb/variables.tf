@@ -36,3 +36,9 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+variable "enable_deletion_protection" {
+  description = "Set to true for production. Enables final snapshot on destroy and 30-day secret recovery window."
+  type        = bool
+  default     = false
+}

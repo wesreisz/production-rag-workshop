@@ -36,6 +36,24 @@ class TestDeriveVideoId:
         # Assert
         assert result == "my-talk"
 
+    def test_derive_video_id_flat_path_succeeds(self):
+        # Arrange
+        s3_key = "uploads/talk.mp3"
+
+        # Act
+        result = TranscribeService.derive_video_id(s3_key)
+
+        # Assert
+        assert result == "talk"
+
+    def test_derive_video_id_rejects_nested_path(self):
+        # Arrange
+        s3_key = "uploads/subfolder/talk.mp3"
+
+        # Act & Assert
+        with pytest.raises(ValueError, match="nested path"):
+            TranscribeService.derive_video_id(s3_key)
+
 
 class TestDetectMediaFormat:
     def test_mp3(self):
