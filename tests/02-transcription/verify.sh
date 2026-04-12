@@ -7,7 +7,7 @@ SAMPLES_DIR="$(cd "$(dirname "$0")/../../samples" && pwd)"
 
 echo "=== 0. Unit test reminder ==="
 echo "Run unit tests separately:"
-echo "  cd $MODULE_DIR && python3 -m venv .venv && pip install -f dev-requirements.txt && requirements.txt  && source .venv/bin/activate && python -m pytest tests/ -v"
+echo "  cd $MODULE_DIR && python3 -m venv .venv && source .venv/bin/activate && pip install -r dev-requirements.txt -r requirements.txt && python -m pytest tests/ -v"
 echo ""
 
 read -rp "Press Enter to continue or Ctrl+C to exit... "
