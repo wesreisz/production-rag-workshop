@@ -27,6 +27,12 @@ resource "aws_api_gateway_resource" "video_ask" {
   path_part   = "ask"
 }
 
+resource "aws_api_gateway_resource" "video_presign" {
+  rest_api_id = aws_api_gateway_rest_api.this.id
+  parent_id   = aws_api_gateway_resource.video_id.id
+  path_part   = "presign"
+}
+
 resource "aws_api_gateway_resource" "health" {
   rest_api_id = aws_api_gateway_rest_api.this.id
   parent_id   = aws_api_gateway_rest_api.this.root_resource_id
@@ -60,6 +66,14 @@ resource "aws_api_gateway_method" "post_video_ask" {
 resource "aws_api_gateway_method" "get_health" {
   rest_api_id      = aws_api_gateway_rest_api.this.id
   resource_id      = aws_api_gateway_resource.health.id
+  http_method      = "GET"
+  authorization    = "NONE"
+  api_key_required = true
+}
+
+resource "aws_api_gateway_method" "get_video_presign" {
+  rest_api_id      = aws_api_gateway_rest_api.this.id
+  resource_id      = aws_api_gateway_resource.video_presign.id
   http_method      = "GET"
   authorization    = "NONE"
   api_key_required = true
@@ -101,6 +115,15 @@ resource "aws_api_gateway_integration" "get_health" {
   uri                     = var.lambda_invoke_arn
 }
 
+resource "aws_api_gateway_integration" "get_video_presign" {
+  rest_api_id             = aws_api_gateway_rest_api.this.id
+  resource_id             = aws_api_gateway_resource.video_presign.id
+  http_method             = aws_api_gateway_method.get_video_presign.http_method
+  type                    = "AWS_PROXY"
+  integration_http_method = "POST"
+  uri                     = var.lambda_invoke_arn
+}
+
 resource "aws_api_gateway_api_key" "this" {
   name    = "${var.api_name}-key"
   enabled = true
@@ -113,6 +136,7 @@ resource "aws_api_gateway_deployment" "this" {
     aws_api_gateway_integration.get_videos,
     aws_api_gateway_integration.post_video_ask,
     aws_api_gateway_integration.get_health,
+    aws_api_gateway_integration.get_video_presign,
   ]
 
   rest_api_id = aws_api_gateway_rest_api.this.id
@@ -124,14 +148,17 @@ resource "aws_api_gateway_deployment" "this" {
       aws_api_gateway_resource.video_id,
       aws_api_gateway_resource.video_ask,
       aws_api_gateway_resource.health,
+      aws_api_gateway_resource.video_presign,
       aws_api_gateway_method.post_ask,
       aws_api_gateway_method.get_videos,
       aws_api_gateway_method.post_video_ask,
       aws_api_gateway_method.get_health,
+      aws_api_gateway_method.get_video_presign,
       aws_api_gateway_integration.post_ask,
       aws_api_gateway_integration.get_videos,
       aws_api_gateway_integration.post_video_ask,
       aws_api_gateway_integration.get_health,
+      aws_api_gateway_integration.get_video_presign,
     ]))
   }
 

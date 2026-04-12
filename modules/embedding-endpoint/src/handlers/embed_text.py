@@ -5,6 +5,8 @@ import boto3
 
 _bedrock = boto3.client("bedrock-runtime")
 _api_key = os.environ.get("API_KEY", "")
+if not _api_key:
+    raise ValueError("API_KEY environment variable must be set")
 _dimensions = int(os.environ.get("EMBEDDING_DIMENSIONS", "256"))
 
 _CORS_HEADERS = {

@@ -19,6 +19,12 @@ def _make_cursor(rows):
     return cursor
 
 
+def _make_fetchone_cursor(row):
+    cursor = MagicMock()
+    cursor.fetchone.return_value = row
+    return cursor
+
+
 def _make_conn(cursor):
     conn = MagicMock()
     conn.closed = False
@@ -114,25 +120,41 @@ class TestSearchSimilar:
         # Act
         svc.search_similar(embedding, top_k=5)
 
-        # Assert
+        # Assert — base SQL has no video_id or speaker WHERE clause filter
         executed_sql = cursor.execute.call_args[0][0]
-        assert "WHERE" not in executed_sql
+        assert "video_id = %(video_id)s" not in executed_sql
+        assert "speaker = %(speaker)s" not in executed_sql
 
-    def test_search_similar_filters_below_threshold(self):
-        # Arrange
-        low_similarity_row = SAMPLE_ROW[:8] + (0.3,)
+    def test_search_respects_similarity_threshold(self):
+        # Arrange — mock cursor simulates DB returning only rows above threshold
         high_similarity_row = SAMPLE_ROW[:8] + (0.9,)
         svc = RetrievalService()
-        cursor = _make_cursor([low_similarity_row, high_similarity_row])
+        cursor = _make_cursor([high_similarity_row])
         svc._db_conn = _make_conn(cursor)
         embedding = [0.01] * 256
 
         # Act
         results = svc.search_similar(embedding, top_k=5, similarity_threshold=0.5)
 
-        # Assert
+        # Assert — all rows returned by cursor are passed through
         assert len(results) == 1
         assert results[0]["similarity"] == 0.9
+
+    def test_search_threshold_in_sql_params(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_cursor([SAMPLE_ROW])
+        svc._db_conn = _make_conn(cursor)
+        embedding = [0.01] * 256
+
+        # Act
+        svc.search_similar(embedding, top_k=5, similarity_threshold=0.75)
+
+        # Assert — similarity_threshold is passed as a SQL parameter, not filtered in Python
+        executed_params = cursor.execute.call_args[0][1]
+        assert isinstance(executed_params, dict)
+        assert executed_params["similarity_threshold"] == 0.75
+        assert executed_params["top_k"] == 5
 
     def test_search_similar_with_video_id_filter(self):
         # Arrange
@@ -166,6 +188,72 @@ class TestListVideos:
         assert results[0]["speaker"] == "Jane Doe"
         assert results[0]["title"] == "Building RAG Systems"
         assert results[0]["chunk_count"] == 3
+
+
+class TestGetVideoMetadata:
+    def test_get_video_metadata_returns_dict(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_fetchone_cursor(("uploads/hello-my_name_is_wes.mp3", "Wesley Reisz", "Building RAG Systems"))
+        svc._db_conn = _make_conn(cursor)
+
+        # Act
+        result = svc.get_video_metadata("hello-my_name_is_wes")
+
+        # Assert
+        assert result["source_s3_key"] == "uploads/hello-my_name_is_wes.mp3"
+        assert result["speaker"] == "Wesley Reisz"
+        assert result["title"] == "Building RAG Systems"
+
+    def test_get_video_metadata_not_found(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_fetchone_cursor(None)
+        svc._db_conn = _make_conn(cursor)
+
+        # Act
+        result = svc.get_video_metadata("nonexistent")
+
+        # Assert
+        assert result is None
+
+
+class TestGetChunkMetadata:
+    def test_get_chunk_metadata_returns_dict(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_fetchone_cursor((
+            "uploads/hello-my_name_is_wes.mp3",
+            "hello-my_name_is_wes",
+            "Wesley Reisz",
+            "Building RAG Systems",
+            234.5,
+            279.8,
+        ))
+        svc._db_conn = _make_conn(cursor)
+
+        # Act
+        result = svc.get_chunk_metadata("hello-my_name_is_wes-chunk-001")
+
+        # Assert
+        assert result["source_s3_key"] == "uploads/hello-my_name_is_wes.mp3"
+        assert result["video_id"] == "hello-my_name_is_wes"
+        assert result["speaker"] == "Wesley Reisz"
+        assert result["title"] == "Building RAG Systems"
+        assert result["start_time"] == 234.5
+        assert result["end_time"] == 279.8
+
+    def test_get_chunk_metadata_not_found(self):
+        # Arrange
+        svc = RetrievalService()
+        cursor = _make_fetchone_cursor(None)
+        svc._db_conn = _make_conn(cursor)
+
+        # Act
+        result = svc.get_chunk_metadata("nonexistent-chunk")
+
+        # Assert
+        assert result is None
 
 
 class TestHandler:
@@ -264,3 +352,71 @@ class TestHandler:
 
         # Assert
         assert response["statusCode"] == 404
+
+    def test_handler_presign_returns_url(self, aws_credentials, sample_presign_event):
+        # Arrange
+        fake_metadata = {"source_s3_key": "uploads/hello-my_name_is_wes.mp3", "speaker": "Wesley Reisz", "title": "Building RAG Systems"}
+        fake_url = "https://example.s3.amazonaws.com/uploads/hello-my_name_is_wes.mp3?X-Amz-Signature=abc"
+        with patch("src.handlers.question.service") as mock_service, \
+             patch("src.handlers.question.s3_client") as mock_s3:
+            mock_service.get_video_metadata.return_value = fake_metadata
+            mock_s3.generate_presigned_url.return_value = fake_url
+
+            # Act
+            response = handler(sample_presign_event, None)
+
+        # Assert
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body["presigned_url"] == fake_url
+        assert body["video_id"] == "hello-my_name_is_wes"
+        assert body["expires_in"] == 3600
+
+    def test_handler_presign_with_chunk_id(self, aws_credentials, sample_presign_with_chunk_event):
+        # Arrange
+        fake_metadata = {
+            "source_s3_key": "uploads/hello-my_name_is_wes.mp3",
+            "video_id": "hello-my_name_is_wes",
+            "speaker": "Wesley Reisz",
+            "title": "Building RAG Systems",
+            "start_time": 234.5,
+            "end_time": 279.8,
+        }
+        fake_url = "https://example.s3.amazonaws.com/uploads/hello-my_name_is_wes.mp3?X-Amz-Signature=abc"
+        with patch("src.handlers.question.service") as mock_service, \
+             patch("src.handlers.question.s3_client") as mock_s3:
+            mock_service.get_chunk_metadata.return_value = fake_metadata
+            mock_s3.generate_presigned_url.return_value = fake_url
+
+            # Act
+            response = handler(sample_presign_with_chunk_event, None)
+
+        # Assert
+        assert response["statusCode"] == 200
+        body = json.loads(response["body"])
+        assert body["start_time"] == 234.5
+        assert body["end_time"] == 279.8
+
+    def test_handler_presign_video_not_found(self, aws_credentials, sample_presign_event):
+        # Arrange
+        with patch("src.handlers.question.service") as mock_service:
+            mock_service.get_video_metadata.return_value = None
+
+            # Act
+            response = handler(sample_presign_event, None)
+
+        # Assert
+        assert response["statusCode"] == 404
+        assert json.loads(response["body"]) == {"error": "video not found"}
+
+    def test_handler_presign_chunk_not_found(self, aws_credentials, sample_presign_with_chunk_event):
+        # Arrange
+        with patch("src.handlers.question.service") as mock_service:
+            mock_service.get_chunk_metadata.return_value = None
+
+            # Act
+            response = handler(sample_presign_with_chunk_event, None)
+
+        # Assert
+        assert response["statusCode"] == 404
+        assert json.loads(response["body"]) == {"error": "chunk not found"}

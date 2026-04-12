@@ -288,6 +288,7 @@ module "question" {
     SECRET_ARN           = module.aurora_vectordb.secret_arn
     DB_NAME              = module.aurora_vectordb.db_name
     EMBEDDING_DIMENSIONS = "256"
+    MEDIA_BUCKET         = module.media_bucket.bucket_name
   }
 
   policy_statements = jsonencode({
@@ -302,6 +303,11 @@ module "question" {
         Effect   = "Allow"
         Action   = ["secretsmanager:GetSecretValue"]
         Resource = module.aurora_vectordb.secret_arn
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["s3:GetObject"]
+        Resource = "${module.media_bucket.bucket_arn}/uploads/*"
       }
     ]
   })
