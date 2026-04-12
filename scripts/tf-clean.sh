@@ -7,7 +7,7 @@ ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text 2>/dev/nu
 }
 
 BUCKET_NAME="production-rag-tf-state-${ACCOUNT_ID}"
-INFRA_DIR="$(cd "$(dirname "$0")" && pwd)"
+INFRA_DIR="$(cd "$(dirname "$0")/../infra" && pwd)"
 
 echo "Account:      ${ACCOUNT_ID}"
 echo "State bucket: ${BUCKET_NAME}"
