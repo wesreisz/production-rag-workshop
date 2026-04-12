@@ -82,3 +82,31 @@ def sample_videos_event():
         "body": None,
         "isBase64Encoded": False,
     }
+
+
+@pytest.fixture
+def sample_presign_event():
+    return {
+        "resource": "/videos/{video_id}/presign",
+        "path": "/videos/hello-my_name_is_wes/presign",
+        "httpMethod": "GET",
+        "headers": {},
+        "pathParameters": {"video_id": "hello-my_name_is_wes"},
+        "queryStringParameters": None,
+        "body": None,
+        "isBase64Encoded": False,
+    }
+
+
+@pytest.fixture
+def sample_presign_with_chunk_event():
+    return {
+        "resource": "/videos/{video_id}/presign",
+        "path": "/videos/hello-my_name_is_wes/presign",
+        "httpMethod": "GET",
+        "headers": {},
+        "pathParameters": {"video_id": "hello-my_name_is_wes"},
+        "queryStringParameters": {"chunk_id": "hello-my_name_is_wes-chunk-003"},
+        "body": None,
+        "isBase64Encoded": False,
+    }

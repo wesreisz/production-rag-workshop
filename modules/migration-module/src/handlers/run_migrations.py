@@ -1,5 +1,6 @@
 import json
 import os
+from urllib.parse import quote_plus
 
 import boto3
 from alembic import command
@@ -14,8 +15,10 @@ def handler(event, context):
     sm = boto3.client("secretsmanager")
     secret = json.loads(sm.get_secret_value(SecretId=secret_arn)["SecretString"])
 
+    username = quote_plus(secret["username"])
+    password = quote_plus(secret["password"])
     connection_url = (
-        f"postgresql+psycopg2://{secret['username']}:{secret['password']}"
+        f"postgresql+psycopg2://{username}:{password}"
         f"@{secret['host']}:{secret['port']}/{db_name}"
     )
 

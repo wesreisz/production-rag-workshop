@@ -26,6 +26,11 @@ class TranscribeService:
     def derive_video_id(s3_key):
         filename = s3_key.replace("uploads/", "", 1)
         video_id, _ = os.path.splitext(filename)
+        if "/" in video_id:
+            raise ValueError(
+                f"S3 key '{s3_key}' contains a nested path. "
+                "Upload files directly under uploads/ with no subdirectories."
+            )
         return video_id
 
     @staticmethod

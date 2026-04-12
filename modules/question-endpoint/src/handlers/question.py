@@ -1,9 +1,15 @@
 import json
+import os
+
+import boto3
 
 from src.services.retrieval_service import service
 from src.utils.logger import get_logger
 
 logger = get_logger(__name__)
+
+s3_client = boto3.client("s3")
+MEDIA_BUCKET = os.environ.get("MEDIA_BUCKET", "")
 
 
 def _response(status_code, body):
@@ -19,7 +25,10 @@ def _response(status_code, body):
 
 def _parse_post_body(event):
     raw_body = event.get("body") or "{}"
-    return json.loads(raw_body)
+    try:
+        return json.loads(raw_body)
+    except json.JSONDecodeError:
+        raise ValueError("request body must be valid JSON")
 
 
 def _validate_ask_params(body):
@@ -40,6 +49,48 @@ def _validate_ask_params(body):
         "top_k": top_k,
         "similarity_threshold": float(similarity_threshold),
     }, None
+
+
+def _handle_presign(event):
+    video_id = (event.get("pathParameters") or {}).get("video_id")
+    chunk_id = (event.get("queryStringParameters") or {}).get("chunk_id")
+
+    if chunk_id:
+        metadata = service.get_chunk_metadata(chunk_id)
+        if metadata is None:
+            return _response(404, {"error": "chunk not found"})
+        presigned_url = s3_client.generate_presigned_url(
+            "get_object",
+            Params={"Bucket": MEDIA_BUCKET, "Key": metadata["source_s3_key"]},
+            ExpiresIn=3600,
+        )
+        return _response(200, {
+            "video_id": metadata["video_id"],
+            "presigned_url": presigned_url,
+            "expires_in": 3600,
+            "source_s3_key": metadata["source_s3_key"],
+            "speaker": metadata["speaker"],
+            "title": metadata["title"],
+            "start_time": metadata["start_time"],
+            "end_time": metadata["end_time"],
+        })
+
+    metadata = service.get_video_metadata(video_id)
+    if metadata is None:
+        return _response(404, {"error": "video not found"})
+    presigned_url = s3_client.generate_presigned_url(
+        "get_object",
+        Params={"Bucket": MEDIA_BUCKET, "Key": metadata["source_s3_key"]},
+        ExpiresIn=3600,
+    )
+    return _response(200, {
+        "video_id": video_id,
+        "presigned_url": presigned_url,
+        "expires_in": 3600,
+        "source_s3_key": metadata["source_s3_key"],
+        "speaker": metadata["speaker"],
+        "title": metadata["title"],
+    })
 
 
 def handler(event, context):
@@ -88,7 +139,13 @@ def handler(event, context):
                 "results": results,
             })
 
+        if method == "GET" and resource == "/videos/{video_id}/presign":
+            return _handle_presign(event)
+
         return _response(404, {"error": "not found"})
+
+    except ValueError as e:
+        return _response(400, {"error": str(e)})
 
     except Exception:
         logger.exception("Unhandled error in question handler")
