@@ -145,8 +145,8 @@ The root module that composes all infrastructure modules.
 | `infra/environments/dev/main.tf` | `provider "aws"` with region and `default_tags`, module calls (S3, EventBridge, Step Functions) |
 | `infra/environments/dev/outputs.tf` | Media bucket name, Step Functions ARN |
 
-**Backend configuration** must reference the bootstrap bucket:
-- Bucket: `production-rag-tf-state-<account-id>`
+**Backend configuration** must reference the bootstrap bucket (hardcoded, no `-backend-config` needed):
+- Bucket: `production-rag-tf-state-078558209238`
 - Key: `dev/terraform.tfstate`
 - DynamoDB table: `production-rag-tf-lock`
 - Region: `us-east-1`
