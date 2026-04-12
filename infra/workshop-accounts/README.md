@@ -49,10 +49,11 @@ Each account is created under the Organization and moved into the workshop OU. P
 ### 4. Enable Student Access
 
 ```bash
-./enable-student-access.sh 1    # configure student-01
+./enable-student-access.sh 1                              # configure student-01 (credentials saved locally only)
+./enable-student-access.sh 3 student-03@weslesyreisz.com   # configure student-03 and email credentials
 ```
 
-Run once per student. Creates the IAM user, generates credentials, sets up a budget. Credentials are saved to `students/student-NN-credentials.txt`.
+Run once per student. Creates the IAM user, generates credentials, sets up a budget. Credentials are saved to `students/student-NN-credentials.txt`. When an email is provided, credentials are also sent to the student automatically (requires `GMAIL_APP_PASSWORD` in `config.env`).
 
 ## Other Scripts
 
