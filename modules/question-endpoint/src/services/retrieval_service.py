@@ -11,52 +11,47 @@ logger = get_logger(__name__)
 SEARCH_SQL = """
 SELECT chunk_id, video_id, text, speaker, title,
        start_time, end_time, source_s3_key,
-       1 - (embedding <=> %(embedding)s::vector) AS similarity
+       1 - (embedding <=> %s::vector) AS similarity
 FROM video_chunks
-WHERE 1 - (embedding <=> %(embedding)s::vector) >= %(similarity_threshold)s
-ORDER BY similarity DESC
-LIMIT %(top_k)s;
+ORDER BY embedding <=> %s::vector
+LIMIT %s;
 """
 
 SEARCH_SQL_VIDEO_ID = """
 SELECT chunk_id, video_id, text, speaker, title,
        start_time, end_time, source_s3_key,
-       1 - (embedding <=> %(embedding)s::vector) AS similarity
+       1 - (embedding <=> %s::vector) AS similarity
 FROM video_chunks
-WHERE video_id = %(video_id)s
-  AND 1 - (embedding <=> %(embedding)s::vector) >= %(similarity_threshold)s
-ORDER BY similarity DESC
-LIMIT %(top_k)s;
+WHERE video_id = %s
+ORDER BY embedding <=> %s::vector
+LIMIT %s;
 """
 
 SEARCH_SQL_SPEAKER = """
 SELECT chunk_id, video_id, text, speaker, title,
        start_time, end_time, source_s3_key,
-       1 - (embedding <=> %(embedding)s::vector) AS similarity
+       1 - (embedding <=> %s::vector) AS similarity
 FROM video_chunks
-WHERE speaker = %(speaker)s
-  AND 1 - (embedding <=> %(embedding)s::vector) >= %(similarity_threshold)s
-ORDER BY similarity DESC
-LIMIT %(top_k)s;
+WHERE speaker = %s
+ORDER BY embedding <=> %s::vector
+LIMIT %s;
 """
 
 SEARCH_SQL_BOTH = """
 SELECT chunk_id, video_id, text, speaker, title,
        start_time, end_time, source_s3_key,
-       1 - (embedding <=> %(embedding)s::vector) AS similarity
+       1 - (embedding <=> %s::vector) AS similarity
 FROM video_chunks
-WHERE video_id = %(video_id)s AND speaker = %(speaker)s
-  AND 1 - (embedding <=> %(embedding)s::vector) >= %(similarity_threshold)s
-ORDER BY similarity DESC
-LIMIT %(top_k)s;
+WHERE video_id = %s AND speaker = %s
+ORDER BY embedding <=> %s::vector
+LIMIT %s;
 """
 
 LIST_VIDEOS_SQL = """
 SELECT video_id, speaker, title, COUNT(*) AS chunk_count
 FROM video_chunks
 GROUP BY video_id, speaker, title
-ORDER BY video_id
-LIMIT 500;
+ORDER BY video_id;
 """
 
 VIDEO_METADATA_SQL = """SELECT DISTINCT source_s3_key, speaker, title
@@ -115,25 +110,17 @@ class RetrievalService:
         conn = self.get_db_connection()
         cursor = conn.cursor()
         try:
-            params = {
-                "embedding": str(embedding),
-                "top_k": top_k,
-                "similarity_threshold": similarity_threshold,
-            }
+            embedding_str = str(embedding)
             if video_id is not None and speaker is not None:
-                params["video_id"] = video_id
-                params["speaker"] = speaker
-                cursor.execute(SEARCH_SQL_BOTH, params)
+                cursor.execute(SEARCH_SQL_BOTH, (embedding_str, video_id, speaker, embedding_str, top_k))
             elif video_id is not None:
-                params["video_id"] = video_id
-                cursor.execute(SEARCH_SQL_VIDEO_ID, params)
+                cursor.execute(SEARCH_SQL_VIDEO_ID, (embedding_str, video_id, embedding_str, top_k))
             elif speaker is not None:
-                params["speaker"] = speaker
-                cursor.execute(SEARCH_SQL_SPEAKER, params)
+                cursor.execute(SEARCH_SQL_SPEAKER, (embedding_str, speaker, embedding_str, top_k))
             else:
-                cursor.execute(SEARCH_SQL, params)
+                cursor.execute(SEARCH_SQL, (embedding_str, embedding_str, top_k))
             rows = cursor.fetchall()
-            return [
+            results = [
                 {
                     "chunk_id": row[0],
                     "video_id": row[1],
@@ -147,6 +134,7 @@ class RetrievalService:
                 }
                 for row in rows
             ]
+            return [r for r in results if r["similarity"] >= similarity_threshold]
         except Exception:
             self._db_conn = None
             raise

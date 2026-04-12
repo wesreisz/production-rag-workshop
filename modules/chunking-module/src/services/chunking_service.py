@@ -19,9 +19,6 @@ class ChunkingService:
         response = self.s3_client.get_object(Bucket=bucket, Key=key)
         return json.loads(response["Body"].read())
 
-    def summarize_chunks(self, chunks):
-        raise NotImplementedError
-
     def parse_timed_words(self, transcript):
         timed_words = []
         for item in transcript["results"]["items"]:
