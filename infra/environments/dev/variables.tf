@@ -12,3 +12,9 @@ variable "project_name" {
   type    = string
   default = "production-rag"
 }
+
+variable "aurora_master_password" {
+  type        = string
+  sensitive   = true
+  description = "Aurora master password"
+}

@@ -420,3 +420,149 @@ resource "aws_cloudwatch_event_target" "start_pipeline" {
   arn       = aws_sfn_state_machine.pipeline.arn
   role_arn  = aws_iam_role.eventbridge.arn
 }
+
+module "networking" {
+  source = "../../modules/networking"
+
+  project_name = var.project_name
+  aws_region   = var.aws_region
+  tags         = local.common_tags
+}
+
+module "aurora_vectordb" {
+  source = "../../modules/aurora-vectordb"
+
+  project_name      = var.project_name
+  subnet_ids        = module.networking.subnet_ids
+  security_group_id = module.networking.aurora_security_group_id
+  master_password   = var.aurora_master_password
+  tags              = local.common_tags
+}
+
+resource "aws_lambda_layer_version" "psycopg2" {
+  layer_name          = "${var.project_name}-psycopg2"
+  filename            = "${path.module}/../../../layers/psycopg2/psycopg2-layer.zip"
+  compatible_runtimes = ["python3.11"]
+  source_code_hash    = filebase64sha256("${path.module}/../../../layers/psycopg2/psycopg2-layer.zip")
+}
+
+resource "null_resource" "build_migration_deps" {
+  triggers = {
+    requirements_hash = filemd5("${path.module}/../../../modules/migration-module/requirements.txt")
+  }
+
+  provisioner "local-exec" {
+    command = "bash ${path.module}/../../../scripts/build-migration-module.sh"
+  }
+}
+
+module "run_migrations" {
+  source = "../../modules/lambda-vpc"
+
+  function_name = "${var.project_name}-run-migrations"
+  handler       = "src.handlers.run_migrations.handler"
+  source_dir    = "${path.module}/../../../modules/migration-module"
+  timeout       = 120
+
+  subnet_ids         = module.networking.subnet_ids
+  security_group_ids = [module.networking.lambda_security_group_id]
+  layers             = [aws_lambda_layer_version.psycopg2.arn]
+
+  environment_variables = {
+    SECRET_ARN = module.aurora_vectordb.secret_arn
+    DB_NAME    = module.aurora_vectordb.db_name
+  }
+
+  policy_statements = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = module.aurora_vectordb.secret_arn
+      }
+    ]
+  })
+
+  depends_on = [null_resource.build_migration_deps]
+}
+
+module "embed_chunk" {
+  source = "../../modules/lambda-vpc"
+
+  function_name = "${var.project_name}-embed-chunk"
+  handler       = "src.handlers.process_embedding.handler"
+  source_dir    = "${path.module}/../../../modules/embedding-module"
+  timeout       = 120
+
+  subnet_ids         = module.networking.subnet_ids
+  security_group_ids = [module.networking.lambda_security_group_id]
+  layers             = [aws_lambda_layer_version.psycopg2.arn]
+
+  environment_variables = {
+    SECRET_ARN           = module.aurora_vectordb.secret_arn
+    DB_NAME              = module.aurora_vectordb.db_name
+    EMBEDDING_DIMENSIONS = "256"
+  }
+
+  policy_statements = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject"
+        ]
+        Resource = "${module.media_bucket.bucket_arn}/chunks/*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "bedrock:InvokeModel"
+        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = module.aurora_vectordb.secret_arn
+      },
+      {
+        Effect = "Allow"
+        Action = [
+          "sqs:ReceiveMessage",
+          "sqs:DeleteMessage",
+          "sqs:GetQueueAttributes"
+        ]
+        Resource = aws_sqs_queue.embedding.arn
+      }
+    ]
+  })
+}
+
+resource "aws_lambda_event_source_mapping" "embedding" {
+  event_source_arn = aws_sqs_queue.embedding.arn
+  function_name    = module.embed_chunk.function_arn
+  batch_size       = 1
+  enabled          = true
+}
+
+resource "null_resource" "run_migrations" {
+  triggers = {
+    handler_hash    = filemd5("${path.module}/../../../modules/migration-module/src/handlers/run_migrations.py")
+    migrations_hash = filemd5("${path.module}/../../../modules/migration-module/migrations/versions/001_initial_schema.py")
+  }
+
+  depends_on = [module.run_migrations, module.aurora_vectordb]
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      aws lambda invoke \
+        --function-name ${module.run_migrations.function_name} \
+        --payload '{}' \
+        --cli-binary-format raw-in-base64-out \
+        --cli-read-timeout 310 \
+        /tmp/migration-response.json
+      cat /tmp/migration-response.json
+      grep -q '"errorMessage"' /tmp/migration-response.json && exit 1 || true
+    EOT
+  }
+}
