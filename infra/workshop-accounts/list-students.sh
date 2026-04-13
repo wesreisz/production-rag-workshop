@@ -100,7 +100,11 @@ if [ -n "$ACTIVE_ACCOUNTS" ]; then
                 --query 'Budgets[].{Name:BudgetName, Limit:BudgetLimit.Amount, Spent:CalculatedSpend.ActualSpend.Amount}' \
                 --output json 2>/dev/null) || BUDGETS="[]"
 
-        BUDGET_COUNT=$(echo "$BUDGETS" | python3 -c "import sys,json; print(len(json.load(sys.stdin)))")
+        if [ -z "$BUDGETS" ] || [ "$BUDGETS" = "null" ]; then
+            BUDGETS="[]"
+        fi
+
+        BUDGET_COUNT=$(echo "$BUDGETS" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d) if d else 0)")
 
         if [ "$BUDGET_COUNT" = "0" ]; then
             printf "%-14s %-30s %10s %10s\n" "$ACCT_ID" "(no budget)" "-" "-"
