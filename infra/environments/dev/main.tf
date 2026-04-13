@@ -595,6 +595,51 @@ resource "aws_lambda_permission" "embed_text_public_invoke" {
   principal     = "*"
 }
 
+module "question" {
+  source = "../../modules/lambda-vpc"
+
+  function_name = "${var.project_name}-question"
+  handler       = "src.handlers.question.handler"
+  source_dir    = "${path.module}/../../../modules/question-endpoint"
+  timeout       = 30
+
+  subnet_ids         = module.networking.subnet_ids
+  security_group_ids = [module.networking.lambda_security_group_id]
+  layers             = [aws_lambda_layer_version.psycopg2.arn]
+
+  environment_variables = {
+    SECRET_ARN           = module.aurora_vectordb.secret_arn
+    DB_NAME              = module.aurora_vectordb.db_name
+    EMBEDDING_DIMENSIONS = "256"
+  }
+
+  policy_statements = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Effect   = "Allow"
+        Action   = "bedrock:InvokeModel"
+        Resource = "arn:aws:bedrock:${var.aws_region}::foundation-model/amazon.titan-embed-text-v2:0"
+      },
+      {
+        Effect   = "Allow"
+        Action   = "secretsmanager:GetSecretValue"
+        Resource = module.aurora_vectordb.secret_arn
+      }
+    ]
+  })
+}
+
+module "question_api" {
+  source = "../../modules/api-gateway"
+
+  api_name             = "${var.project_name}-question-api"
+  lambda_invoke_arn    = module.question.invoke_arn
+  lambda_function_name = module.question.function_name
+  stage_name           = "prod"
+  tags                 = local.common_tags
+}
+
 resource "null_resource" "run_migrations" {
   triggers = {
     handler_hash    = filemd5("${path.module}/../../../modules/migration-module/src/handlers/run_migrations.py")

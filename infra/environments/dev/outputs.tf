@@ -58,3 +58,16 @@ output "embed_text_api_key" {
   value     = random_password.embed_text_api_key.result
   sensitive = true
 }
+
+output "question_api_url" {
+  value = module.question_api.api_url
+}
+
+output "question_api_key" {
+  value     = module.question_api.api_key_value
+  sensitive = true
+}
+
+output "question_function_name" {
+  value = module.question.function_name
+}
