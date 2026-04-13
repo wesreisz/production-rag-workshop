@@ -49,3 +49,12 @@ output "lambda_security_group_id" {
 output "embedding_function_name" {
   value = module.embed_chunk.function_name
 }
+
+output "embed_text_endpoint_url" {
+  value = aws_lambda_function_url.embed_text.function_url
+}
+
+output "embed_text_api_key" {
+  value     = random_password.embed_text_api_key.result
+  sensitive = true
+}
